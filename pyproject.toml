@@ -5,7 +5,7 @@ description = "SparkyAI Browser Automation Runner"
 requires-python = ">=3.11"
 dependencies = [
     "anthropic",
-    "browser-use",
+    "browser-use>=0.12.1",
     "python-dotenv",
     "click",
     "pyyaml",
