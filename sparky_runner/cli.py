@@ -32,9 +32,23 @@ def cli(ctx: click.Context) -> None:
         click.echo(ctx.get_help())
 
 
+def _validate_url(
+    ctx: click.Context, param: click.Parameter, value: str | None,
+) -> str | None:
+    """Reject values that look like another flag (e.g. ``-u -p`` with no URL)."""
+    if value is not None and value.startswith("-"):
+        raise click.BadParameter(
+            f"Got '{value}' which looks like a flag, not a URL. "
+            "Please provide a URL value after -u/--url.",
+            param_hint="'-u' / '--url'",
+        )
+    return value
+
+
 @cli.command()
 @click.option("-p", "--prompt", "prompts", multiple=True, help="Task prompt(s)")
-@click.option("-u", "--url", "base_url", default=None, help="Base URL")
+@click.option("-u", "--url", "base_url", default=None, callback=_validate_url,
+              help="Base URL")
 @click.option("--no-update-summary", is_flag=True, help="Don't update goal summaries")
 @click.option("--no-update-tasks", is_flag=True, help="Don't overwrite task files")
 @click.option("--no-knowledge-reuse", is_flag=True, help="Don't reuse prior knowledge")
@@ -42,11 +56,12 @@ def cli(ctx: click.Context) -> None:
 @click.option("--headless", is_flag=True, help="Run browser in headless mode")
 @click.option("--credential-profile", default=None, help="Credential profile name")
 @click.option("--model", "model_strs", multiple=True, help="PURPOSE=MODEL_ID override")
-@click.option("--data-dir", type=click.Path(), default=None, help="Data directory path")
+@click.option("--data-dir", type=click.Path(), default=None,
+              help="Sparky Runner home directory (tasks, goal summaries, runs). Default: ~/sparky_runner")
 @click.option("--config", "config_path", type=click.Path(), default=None, help="Config file path")
 @click.option("--shared-session", is_flag=True, help="Share browser session across tasks")
 @click.option("--parallel", type=int, default=1, help="Parallel execution count")
-@click.argument("goal_files", nargs=-1, type=click.Path(exists=True))
+@click.argument("goal_files", nargs=-1, type=click.Path())
 def run(
     prompts: tuple[str, ...],
     base_url: str | None,
@@ -88,8 +103,11 @@ def run(
             credential_profile=credential_profile or "default",
         ))
     for gf in goal_files:
+        gf_path = Path(gf)
+        if not gf_path.exists():
+            raise click.BadParameter(f"Goal file not found: {gf}", param_hint="'GOAL_FILES'")
         tasks.append(TaskSpec(
-            goal_path=Path(gf),
+            goal_path=gf_path,
             credential_profile=credential_profile or "default",
         ))
 
@@ -124,7 +142,8 @@ def goals() -> None:
 
 
 @goals.command("list")
-@click.option("--data-dir", type=click.Path(), default=None)
+@click.option("--data-dir", type=click.Path(), default=None,
+              help="Sparky Runner home directory (tasks, goal summaries, runs). Default: ~/sparky_runner")
 @click.option("--config", "config_path", type=click.Path(), default=None)
 def goals_list(data_dir: str | None, config_path: str | None) -> None:
     """List all existing goals."""
@@ -141,7 +160,8 @@ def goals_list(data_dir: str | None, config_path: str | None) -> None:
 
 @goals.command("show")
 @click.argument("goal_name")
-@click.option("--data-dir", type=click.Path(), default=None)
+@click.option("--data-dir", type=click.Path(), default=None,
+              help="Sparky Runner home directory (tasks, goal summaries, runs). Default: ~/sparky_runner")
 @click.option("--config", "config_path", type=click.Path(), default=None)
 def goals_show(goal_name: str, data_dir: str | None, config_path: str | None) -> None:
     """Show details for a specific goal."""
@@ -159,7 +179,8 @@ def goals_show(goal_name: str, data_dir: str | None, config_path: str | None) ->
 @goals.command("delete")
 @click.argument("goal_name")
 @click.option("--force", is_flag=True, help="Skip confirmation")
-@click.option("--data-dir", type=click.Path(), default=None)
+@click.option("--data-dir", type=click.Path(), default=None,
+              help="Sparky Runner home directory (tasks, goal summaries, runs). Default: ~/sparky_runner")
 @click.option("--config", "config_path", type=click.Path(), default=None)
 def goals_delete(
     goal_name: str, force: bool, data_dir: str | None, config_path: str | None
@@ -177,7 +198,8 @@ def goals_delete(
 
 
 @goals.command("classify")
-@click.option("--data-dir", type=click.Path(), default=None)
+@click.option("--data-dir", type=click.Path(), default=None,
+              help="Sparky Runner home directory (tasks, goal summaries, runs). Default: ~/sparky_runner")
 @click.option("--config", "config_path", type=click.Path(), default=None)
 def goals_classify(data_dir: str | None, config_path: str | None) -> None:
     """Classify observations in all existing goal summaries."""
@@ -201,7 +223,8 @@ def goals_classify(data_dir: str | None, config_path: str | None) -> None:
 
 @goals.command("orphans")
 @click.option("--clean", is_flag=True, help="Delete orphan task files")
-@click.option("--data-dir", type=click.Path(), default=None)
+@click.option("--data-dir", type=click.Path(), default=None,
+              help="Sparky Runner home directory (tasks, goal summaries, runs). Default: ~/sparky_runner")
 @click.option("--config", "config_path", type=click.Path(), default=None)
 def goals_orphans(clean: bool, data_dir: str | None, config_path: str | None) -> None:
     """List or clean orphan task files."""
@@ -229,7 +252,8 @@ def results() -> None:
 
 @results.command("list")
 @click.option("--task", "task_name", default=None, help="Filter by task name")
-@click.option("--data-dir", type=click.Path(), default=None)
+@click.option("--data-dir", type=click.Path(), default=None,
+              help="Sparky Runner home directory (tasks, goal summaries, runs). Default: ~/sparky_runner")
 @click.option("--config", "config_path", type=click.Path(), default=None)
 def results_list(task_name: str | None, data_dir: str | None, config_path: str | None) -> None:
     """List all runs."""
@@ -261,7 +285,8 @@ def results_show(run_path: str) -> None:
 
 @results.command("errors")
 @click.option("--task", "task_name", default=None, help="Filter by task name")
-@click.option("--data-dir", type=click.Path(), default=None)
+@click.option("--data-dir", type=click.Path(), default=None,
+              help="Sparky Runner home directory (tasks, goal summaries, runs). Default: ~/sparky_runner")
 @click.option("--config", "config_path", type=click.Path(), default=None)
 def results_errors(task_name: str | None, data_dir: str | None, config_path: str | None) -> None:
     """Show only runs with errors."""
@@ -313,7 +338,8 @@ def results_screenshots(run_path: str) -> None:
 @click.argument("source_path", type=click.Path())
 @click.option("--branch", default="main", help="Git branch for repo URLs")
 @click.option("--output-dir", type=click.Path(), default=None, help="Output directory")
-@click.option("--data-dir", type=click.Path(), default=None)
+@click.option("--data-dir", type=click.Path(), default=None,
+              help="Sparky Runner home directory (tasks, goal summaries, runs). Default: ~/sparky_runner")
 @click.option("--config", "config_path", type=click.Path(), default=None)
 def generate_goals_cmd(
     source_path: str,
@@ -339,7 +365,8 @@ def generate_goals_cmd(
 
 @cli.command("record")
 @click.option("--url", default=None, help="Starting URL")
-@click.option("--data-dir", type=click.Path(), default=None)
+@click.option("--data-dir", type=click.Path(), default=None,
+              help="Sparky Runner home directory (tasks, goal summaries, runs). Default: ~/sparky_runner")
 @click.option("--config", "config_path", type=click.Path(), default=None)
 def record_cmd(
     url: str | None,

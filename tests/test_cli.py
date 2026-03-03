@@ -1,0 +1,439 @@
+"""Tests for CLI option parsing and error handling."""
+
+from __future__ import annotations
+
+from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import click.testing
+import pytest
+
+from sparky_runner.cli import cli, _parse_model_overrides
+
+
+@pytest.fixture()
+def runner() -> click.testing.CliRunner:
+    return click.testing.CliRunner()
+
+
+# ── Top-level CLI ────────────────────────────────────────────────────────
+
+
+class TestTopLevelCLI:
+    def test_no_args_shows_help(self, runner: click.testing.CliRunner) -> None:
+        result = runner.invoke(cli, [])
+        assert result.exit_code == 0
+        assert "SparkyAI Browser Automation Runner" in result.output
+
+    def test_help_flag(self, runner: click.testing.CliRunner) -> None:
+        result = runner.invoke(cli, ["--help"])
+        assert result.exit_code == 0
+        assert "run" in result.output
+        assert "goals" in result.output
+        assert "results" in result.output
+
+    def test_unknown_subcommand(self, runner: click.testing.CliRunner) -> None:
+        result = runner.invoke(cli, ["nonexistent"])
+        assert result.exit_code != 0
+
+
+# ── run: URL validation ─────────────────────────────────────────────────
+
+
+class TestRunURLValidation:
+    def test_url_missing_value_eats_next_flag(
+        self, runner: click.testing.CliRunner
+    ) -> None:
+        """``-u -p`` should error because -p looks like a flag, not a URL."""
+        result = runner.invoke(cli, ["run", "-u", "-p", "some prompt"])
+        assert result.exit_code != 0
+        assert "looks like a flag" in result.output
+        assert "--url" in result.output
+
+    def test_url_missing_value_eats_long_flag(
+        self, runner: click.testing.CliRunner
+    ) -> None:
+        result = runner.invoke(cli, ["run", "-u", "--headless"])
+        assert result.exit_code != 0
+        assert "looks like a flag" in result.output
+
+    def test_url_missing_value_eats_double_dash_flag(
+        self, runner: click.testing.CliRunner
+    ) -> None:
+        result = runner.invoke(cli, ["run", "--url", "--auto-close"])
+        assert result.exit_code != 0
+        assert "looks like a flag" in result.output
+
+    @patch("sparky_runner.cli.build_config")
+    @patch("sparky_runner.orchestrator.run_single", new_callable=AsyncMock)
+    def test_url_with_valid_value_accepted(
+        self,
+        mock_run: AsyncMock,
+        mock_config: MagicMock,
+        runner: click.testing.CliRunner,
+    ) -> None:
+        mock_cfg = MagicMock()
+        mock_cfg.base_url = "https://example.com"
+        mock_config.return_value = mock_cfg
+        result = runner.invoke(
+            cli, ["run", "-u", "https://example.com", "-p", "test"]
+        )
+        assert result.exit_code == 0
+        mock_config.assert_called_once()
+        assert mock_config.call_args.kwargs["base_url"] == "https://example.com"
+
+
+# ── run: goal file validation ────────────────────────────────────────────
+
+
+class TestRunGoalFileValidation:
+    def test_nonexistent_goal_file(self, runner: click.testing.CliRunner) -> None:
+        result = runner.invoke(cli, ["run", "/no/such/file.json"])
+        assert result.exit_code != 0
+        assert "Goal file not found" in result.output
+
+    def test_nonexistent_goal_file_with_prompt(
+        self, runner: click.testing.CliRunner
+    ) -> None:
+        result = runner.invoke(
+            cli, ["run", "-p", "test", "/no/such/goal.json"]
+        )
+        assert result.exit_code != 0
+        assert "Goal file not found" in result.output
+
+    @patch("sparky_runner.cli.build_config")
+    @patch("sparky_runner.orchestrator.run_single", new_callable=AsyncMock)
+    def test_existing_goal_file_accepted(
+        self,
+        mock_run: AsyncMock,
+        mock_config: MagicMock,
+        runner: click.testing.CliRunner,
+        tmp_path: Path,
+    ) -> None:
+        goal = tmp_path / "goal.json"
+        goal.write_text("{}")
+        mock_config.return_value = MagicMock(base_url="https://x.com")
+        result = runner.invoke(cli, ["run", str(goal)])
+        assert result.exit_code == 0
+
+
+# ── run: --model validation ──────────────────────────────────────────────
+
+
+class TestRunModelOption:
+    def test_model_missing_equals(self, runner: click.testing.CliRunner) -> None:
+        result = runner.invoke(
+            cli, ["run", "-p", "test", "--model", "bad-value"]
+        )
+        assert result.exit_code != 0
+        assert "PURPOSE=MODEL_ID" in result.output
+
+    def test_model_valid_format(self) -> None:
+        result = _parse_model_overrides(("browser_control=claude-sonnet-4-5-20250929",))
+        assert result == {"browser_control": "claude-sonnet-4-5-20250929"}
+
+    def test_model_multiple_overrides(self) -> None:
+        result = _parse_model_overrides((
+            "browser_control=claude-sonnet-4-5-20250929",
+            "summarization=claude-haiku-35-20241022",
+        ))
+        assert result == {
+            "browser_control": "claude-sonnet-4-5-20250929",
+            "summarization": "claude-haiku-35-20241022",
+        }
+
+    def test_model_value_with_equals(self) -> None:
+        """Model IDs with ``=`` in the value should be preserved."""
+        result = _parse_model_overrides(("key=val=ue",))
+        assert result == {"key": "val=ue"}
+
+    def test_model_empty_purpose_raises(self) -> None:
+        with pytest.raises(click.BadParameter, match="PURPOSE=MODEL_ID"):
+            _parse_model_overrides(("no-equals-sign",))
+
+
+# ── run: --parallel validation ───────────────────────────────────────────
+
+
+class TestRunParallelOption:
+    def test_parallel_non_integer(self, runner: click.testing.CliRunner) -> None:
+        result = runner.invoke(
+            cli, ["run", "-p", "test", "--parallel", "abc"]
+        )
+        assert result.exit_code != 0
+        assert "not a valid integer" in result.output.lower() or "invalid" in result.output.lower()
+
+    @patch("sparky_runner.cli.build_config")
+    @patch("sparky_runner.orchestrator.run_single", new_callable=AsyncMock)
+    def test_parallel_valid_integer(
+        self,
+        mock_run: AsyncMock,
+        mock_config: MagicMock,
+        runner: click.testing.CliRunner,
+    ) -> None:
+        mock_config.return_value = MagicMock(base_url="https://x.com")
+        result = runner.invoke(cli, ["run", "-p", "test", "--parallel", "4"])
+        assert result.exit_code == 0
+
+
+# ── run: prompt handling ─────────────────────────────────────────────────
+
+
+class TestRunPromptHandling:
+    @patch("sparky_runner.cli.build_config")
+    @patch("sparky_runner.orchestrator.run_single", new_callable=AsyncMock)
+    def test_single_prompt(
+        self,
+        mock_run: AsyncMock,
+        mock_config: MagicMock,
+        runner: click.testing.CliRunner,
+    ) -> None:
+        mock_config.return_value = MagicMock(base_url="https://x.com")
+        result = runner.invoke(cli, ["run", "-p", "do a thing"])
+        assert result.exit_code == 0
+        mock_run.assert_called_once()
+
+    @patch("sparky_runner.cli.build_config")
+    @patch("sparky_runner.orchestrator.run_multiple", new_callable=AsyncMock)
+    def test_multiple_prompts(
+        self,
+        mock_run: AsyncMock,
+        mock_config: MagicMock,
+        runner: click.testing.CliRunner,
+    ) -> None:
+        mock_config.return_value = MagicMock(base_url="https://x.com")
+        result = runner.invoke(
+            cli, ["run", "-p", "first", "-p", "second"]
+        )
+        assert result.exit_code == 0
+        mock_run.assert_called_once()
+        tasks = mock_run.call_args.args[0]
+        assert len(tasks) == 2
+        assert tasks[0].prompt == "first"
+        assert tasks[1].prompt == "second"
+
+    @patch("sparky_runner.cli.build_config")
+    def test_no_prompt_no_goal_prompts_interactively(
+        self,
+        mock_config: MagicMock,
+        runner: click.testing.CliRunner,
+    ) -> None:
+        mock_config.return_value = MagicMock(base_url="https://x.com")
+        result = runner.invoke(cli, ["run"], input="my interactive prompt\n")
+        assert result.exit_code == 0 or "Enter your task" in result.output
+
+
+# ── run: flag combinations ───────────────────────────────────────────────
+
+
+class TestRunFlagCombinations:
+    @patch("sparky_runner.cli.build_config")
+    @patch("sparky_runner.orchestrator.run_single", new_callable=AsyncMock)
+    def test_boolean_flags_passed_to_config(
+        self,
+        mock_run: AsyncMock,
+        mock_config: MagicMock,
+        runner: click.testing.CliRunner,
+    ) -> None:
+        mock_config.return_value = MagicMock(base_url="https://x.com")
+        result = runner.invoke(cli, [
+            "run", "-p", "test",
+            "--no-update-summary",
+            "--no-update-tasks",
+            "--no-knowledge-reuse",
+            "--auto-close",
+            "--headless",
+        ])
+        assert result.exit_code == 0
+        kwargs = mock_config.call_args.kwargs
+        assert kwargs["update_summary"] is False
+        assert kwargs["update_tasks"] is False
+        assert kwargs["knowledge_reuse"] is False
+        assert kwargs["auto_close"] is True
+        assert kwargs["headless"] is True
+
+    @patch("sparky_runner.cli.build_config")
+    @patch("sparky_runner.orchestrator.run_single", new_callable=AsyncMock)
+    def test_default_flags(
+        self,
+        mock_run: AsyncMock,
+        mock_config: MagicMock,
+        runner: click.testing.CliRunner,
+    ) -> None:
+        mock_config.return_value = MagicMock(base_url="https://x.com")
+        result = runner.invoke(cli, ["run", "-p", "test"])
+        assert result.exit_code == 0
+        kwargs = mock_config.call_args.kwargs
+        assert kwargs["update_summary"] is True
+        assert kwargs["update_tasks"] is True
+        assert kwargs["knowledge_reuse"] is True
+        assert kwargs["auto_close"] is False
+        assert kwargs["headless"] is False
+
+
+# ── run: unknown options ─────────────────────────────────────────────────
+
+
+class TestRunUnknownOptions:
+    def test_unknown_flag(self, runner: click.testing.CliRunner) -> None:
+        result = runner.invoke(cli, ["run", "--nonexistent-flag"])
+        assert result.exit_code != 0
+        assert "No such option" in result.output or "no such option" in result.output
+
+
+# ── goals subcommand errors ──────────────────────────────────────────────
+
+
+class TestGoalsSubcommandErrors:
+    def test_goals_no_subcommand_shows_usage(
+        self, runner: click.testing.CliRunner
+    ) -> None:
+        result = runner.invoke(cli, ["goals"])
+        assert result.exit_code != 0
+        assert "Usage" in result.output
+
+    def test_goals_show_missing_name(self, runner: click.testing.CliRunner) -> None:
+        result = runner.invoke(cli, ["goals", "show"])
+        assert result.exit_code != 0
+        assert "Missing argument" in result.output
+
+    def test_goals_delete_missing_name(self, runner: click.testing.CliRunner) -> None:
+        result = runner.invoke(cli, ["goals", "delete"])
+        assert result.exit_code != 0
+        assert "Missing argument" in result.output
+
+    def test_goals_unknown_subcommand(self, runner: click.testing.CliRunner) -> None:
+        result = runner.invoke(cli, ["goals", "nonexistent"])
+        assert result.exit_code != 0
+
+
+# ── results subcommand errors ────────────────────────────────────────────
+
+
+class TestResultsSubcommandErrors:
+    def test_results_no_subcommand_shows_usage(
+        self, runner: click.testing.CliRunner
+    ) -> None:
+        result = runner.invoke(cli, ["results"])
+        assert result.exit_code != 0
+        assert "Usage" in result.output
+
+    def test_results_show_missing_path(
+        self, runner: click.testing.CliRunner
+    ) -> None:
+        result = runner.invoke(cli, ["results", "show"])
+        assert result.exit_code != 0
+        assert "Missing argument" in result.output
+
+    def test_results_show_nonexistent_path(
+        self, runner: click.testing.CliRunner
+    ) -> None:
+        result = runner.invoke(cli, ["results", "show", "/no/such/path"])
+        assert result.exit_code != 0
+
+    def test_results_screenshots_missing_path(
+        self, runner: click.testing.CliRunner
+    ) -> None:
+        result = runner.invoke(cli, ["results", "screenshots"])
+        assert result.exit_code != 0
+        assert "Missing argument" in result.output
+
+    def test_results_screenshots_nonexistent_path(
+        self, runner: click.testing.CliRunner
+    ) -> None:
+        result = runner.invoke(cli, ["results", "screenshots", "/no/such/path"])
+        assert result.exit_code != 0
+
+
+# ── run help ─────────────────────────────────────────────────────────────
+
+
+class TestRunHelp:
+    def test_run_help(self, runner: click.testing.CliRunner) -> None:
+        result = runner.invoke(cli, ["run", "--help"])
+        assert result.exit_code == 0
+        assert "--prompt" in result.output
+        assert "--url" in result.output
+        assert "--auto-close" in result.output
+        assert "--headless" in result.output
+        assert "--model" in result.output
+        assert "--parallel" in result.output
+        assert "--shared-session" in result.output
+        assert "--credential-profile" in result.output
+
+
+# ── legacy_main ──────────────────────────────────────────────────────────
+
+
+class TestLegacyMain:
+    @patch("sparky_runner.cli.cli")
+    def test_list_goals_flag(self, mock_cli: MagicMock) -> None:
+        from sparky_runner.cli import legacy_main
+
+        import sys
+        original = sys.argv[:]
+        try:
+            sys.argv = ["sparky_runner.py", "--list-goals"]
+            legacy_main()
+            assert sys.argv == ["sparky_runner.py", "goals", "list"]
+            mock_cli.assert_called_once()
+        finally:
+            sys.argv = original
+
+    @patch("sparky_runner.cli.cli")
+    def test_classify_existing_flag(self, mock_cli: MagicMock) -> None:
+        from sparky_runner.cli import legacy_main
+
+        import sys
+        original = sys.argv[:]
+        try:
+            sys.argv = ["sparky_runner.py", "--classify-existing"]
+            legacy_main()
+            assert sys.argv == ["sparky_runner.py", "goals", "classify"]
+            mock_cli.assert_called_once()
+        finally:
+            sys.argv = original
+
+    @patch("sparky_runner.cli.cli")
+    def test_find_orphans_flag(self, mock_cli: MagicMock) -> None:
+        from sparky_runner.cli import legacy_main
+
+        import sys
+        original = sys.argv[:]
+        try:
+            sys.argv = ["sparky_runner.py", "--find-orphans"]
+            legacy_main()
+            assert sys.argv == ["sparky_runner.py", "goals", "orphans"]
+            mock_cli.assert_called_once()
+        finally:
+            sys.argv = original
+
+    @patch("sparky_runner.cli.cli")
+    def test_clean_orphans_flag(self, mock_cli: MagicMock) -> None:
+        from sparky_runner.cli import legacy_main
+
+        import sys
+        original = sys.argv[:]
+        try:
+            sys.argv = ["sparky_runner.py", "--clean-orphans"]
+            legacy_main()
+            assert sys.argv == ["sparky_runner.py", "goals", "orphans", "--clean"]
+            mock_cli.assert_called_once()
+        finally:
+            sys.argv = original
+
+    @patch("sparky_runner.cli.cli")
+    def test_prompt_flag_maps_to_run(self, mock_cli: MagicMock) -> None:
+        from sparky_runner.cli import legacy_main
+
+        import sys
+        original = sys.argv[:]
+        try:
+            sys.argv = ["sparky_runner.py", "-p", "do stuff", "--auto-close"]
+            legacy_main()
+            assert sys.argv == [
+                "sparky_runner.py", "run", "-p", "do stuff", "--auto-close"
+            ]
+            mock_cli.assert_called_once()
+        finally:
+            sys.argv = original

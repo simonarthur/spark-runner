@@ -11,6 +11,9 @@ dependencies = [
     "pyyaml",
 ]
 
+[tool.setuptools.packages.find]
+include = ["sparky_runner*"]
+
 [project.scripts]
 sparky-runner = "sparky_runner.cli:cli"
 
