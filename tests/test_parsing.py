@@ -88,6 +88,16 @@ class TestExtractAndLogObservations:
         sparky_runner._extract_and_log_observations(summary, "Phase", log)
         assert not log.exists()
 
+    def test_in_progress_treated_as_non_error(self, tmp_path: Path) -> None:
+        """'IN PROGRESS' is a transient state, not a failure."""
+        summary = (
+            "### Sub-phase 1: Poll for Completion\n"
+            "**Status**: IN PROGRESS - Loading graphic remained visible\n"
+        )
+        log = tmp_path / "problem.log"
+        sparky_runner._extract_and_log_observations(summary, "Generate", log)
+        assert not log.exists()
+
     def test_observations_standalone_when_no_errors(self, tmp_path: Path) -> None:
         """Without sub-phase failures, observations are logged standalone."""
         summary = "<OBSERVATIONS>The search bar was missing</OBSERVATIONS>"

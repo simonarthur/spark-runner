@@ -468,7 +468,7 @@ def _extract_and_log_observations(
     #   **Status**: Failed
     #   - **Result**: ⚠️ Partial Success
     # We match any ### heading followed by a Status or Result line.
-    _SUCCESS_INDICATORS: tuple[str, ...] = ("SUCCESS", "SUCCEED", "PASSED", "✅")
+    _SUCCESS_INDICATORS: tuple[str, ...] = ("SUCCESS", "SUCCEED", "PASSED", "✅", "IN PROGRESS")
     has_errors: bool = False
     for sp_match in re.finditer(
         r"###\s*(?:Sub-phase\s+)?[\dA-Za-z.]+[:\s]+([^\n]+)\n"  # sub-phase title
@@ -591,9 +591,13 @@ IMPORTANT RULES:
     Email: {USER_EMAIL}
     Password: {USER_PASSWORD}
 - Each phase should be a self-contained step with clear success criteria.
-- Every phase's instructions MUST end with an explicit STOP condition that tells the agent exactly what state to stop at and to NOT proceed further. For example: "Report success once the Step 2 interface is visible. Do NOT click any buttons or continue to the next step." This prevents the agent from overshooting into work that belongs to a later phase.
 - Write the task instructions as explicit, step-by-step directions for an AI agent controlling a browser.
-- Every phase must start with: "Check for error popup/toast after every action. Report any deviations from expected behavior."
+- Every phase must start with BOTH of these paragraphs (copy them verbatim):
+    "IMPORTANT: Before doing anything else, check whether this phase's goal has ALREADY been achieved by a prior phase (e.g. the expected UI state is already visible). If so, report success immediately without taking any actions."
+    "Check for error popup/toast after every action. Report any deviations from expected behavior."
+- Every phase's FINAL instruction (last numbered step) MUST be a STOP condition in this exact format:
+    "STOP: Report success once <expected state>. Do NOT click any buttons, fill any fields, or proceed further — the next phase will handle that."
+  Additionally, repeat the stop condition BEFORE the last action step so the agent sees it twice. For example, if the last action is "Click Next", the step before it should say "After clicking Next, STOP as soon as the new page is visible."
 - For form fields, specify exact values to enter.
 - For dropdowns/selectors that are custom (like Tone), instruct the agent to type to filter/search rather than scroll.
 - For generation/loading steps, instruct the agent to poll every 5 seconds (NOT one long wait) up to a timeout.
