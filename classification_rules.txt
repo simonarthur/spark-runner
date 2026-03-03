@@ -1,0 +1,13 @@
+# Classification Rules
+# Rules are evaluated in priority order. Blank lines and # comments ignored.
+
+[ERRORS]
+The search dropdown not populating from known good entry values
+A feature that required a workaround using a completely different mechanism
+Form submission failing or producing an application error
+
+[WARNINGS]
+An undocumented required field value from the problem description
+UI element indices shifting from what was documented
+A URL or domain that changed but the feature still works
+An active logged in session is already detected when a login is requested.
