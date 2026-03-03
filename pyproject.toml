@@ -1,3 +1,22 @@
+[project]
+name = "sparky-runner"
+version = "0.1.0"
+description = "SparkyAI Browser Automation Runner"
+requires-python = ">=3.11"
+dependencies = [
+    "anthropic",
+    "browser-use",
+    "python-dotenv",
+    "click",
+    "pyyaml",
+]
+
+[project.scripts]
+sparky-runner = "sparky_runner.cli:cli"
+
+[project.entry-points."pytest11"]
+sparky_runner = "sparky_runner.pytest_plugin"
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]

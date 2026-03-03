@@ -1,0 +1,436 @@
+"""Workflow orchestration: the main execution logic extracted from the original main()."""
+
+from __future__ import annotations
+
+import asyncio
+import json
+from pathlib import Path
+from typing import Any
+
+import anthropic
+from browser_use import Browser, ChatBrowserUse
+from browser_use.agent.views import AgentHistoryList
+
+from sparky_runner.classification import classify_observations
+from sparky_runner.decomposition import decompose_task, generate_task_name
+from sparky_runner.execution import build_augmented_task, run_phase
+from sparky_runner.goals import load_goal_summary
+from sparky_runner.knowledge import find_relevant_knowledge, load_knowledge_index
+from sparky_runner.log import log_event, log_problem
+from sparky_runner.models import (
+    CredentialProfile,
+    ModelConfig,
+    PhaseResult,
+    RunResult,
+    ScreenshotRecord,
+    SparkyConfig,
+    TaskSpec,
+)
+from sparky_runner.observations import _extract_and_log_observations, merge_observations
+from sparky_runner.placeholders import restore_from_storage, sanitize_for_storage
+from sparky_runner.results import write_run_metadata
+from sparky_runner.storage import make_run_dir, phase_name_to_slug, safe_write_path
+from sparky_runner.summarization import (
+    generate_task_report,
+    summarize_phase,
+)
+
+
+def format_phase_plan(phases: list[dict[str, str]]) -> list[str]:
+    """Format the decomposition plan as a list of log-ready lines."""
+    lines: list[str] = [f"PHASE PLAN ({len(phases)} phases):"]
+    for i, p in enumerate(phases, 1):
+        lines.append(f"  Phase {i}: {p['name']}")
+        task_preview: str = p.get("task", "(reuse — see above)")[:2000]
+        lines.append(f"    Instructions: {task_preview}")
+    return lines
+
+
+def format_knowledge_match(knowledge_match: dict[str, Any]) -> list[str]:
+    """Format knowledge-match info as a list of log-ready lines."""
+    lines: list[str] = []
+    reusable: list[dict[str, str]] = knowledge_match.get("reusable_subtasks", [])
+    if reusable:
+        lines.append(f"REUSABLE SUBTASKS ({len(reusable)}):")
+        for st in reusable:
+            lines.append(f"  - {st['filename']} ({st['phase_name']}): {st['reason']}")
+    obs: list[str] = knowledge_match.get("relevant_observations", [])
+    if obs:
+        lines.append(f"RELEVANT OBSERVATIONS FROM PRIOR GOALS ({len(obs)}):")
+        for o in obs:
+            lines.append(f"  - {o}")
+    coverage: str = knowledge_match.get("coverage_notes", "")
+    if coverage:
+        lines.append(f"COVERAGE NOTES: {coverage}")
+    return lines
+
+
+def _make_restore_fn(config: SparkyConfig) -> Any:
+    """Create a restore_from_storage closure using config credentials."""
+    cred: CredentialProfile = config.active_credentials
+    def _restore(text: str) -> str:
+        return restore_from_storage(text, config.base_url, cred.email, cred.password)
+    return _restore
+
+
+def _make_sanitize_fn(config: SparkyConfig) -> Any:
+    """Create a sanitize_for_storage closure using config credentials."""
+    cred: CredentialProfile = config.active_credentials
+    def _sanitize(text: str) -> str:
+        return sanitize_for_storage(text, config.base_url, cred.email, cred.password)
+    return _sanitize
+
+
+async def run_single(
+    task: TaskSpec,
+    config: SparkyConfig,
+    client: anthropic.Anthropic | None = None,
+    browser: Browser | None = None,
+) -> RunResult:
+    """Run a single task (prompt or goal file) and return the result.
+
+    Args:
+        task: The task specification.
+        config: Configuration.
+        client: Optional pre-configured Anthropic client.
+        browser: Optional pre-configured browser (for shared sessions).
+
+    Returns:
+        A ``RunResult`` with all phase outcomes and screenshots.
+    """
+    if client is None:
+        client = anthropic.Anthropic()
+
+    # Use the task-specific credential profile if specified
+    if task.credential_profile != config.active_credential_profile:
+        config.active_credential_profile = task.credential_profile
+
+    cred: CredentialProfile = config.active_credentials
+    restore_fn = _make_restore_fn(config)
+    sanitize_fn = _make_sanitize_fn(config)
+
+    assert config.tasks_dir is not None
+    assert config.goal_summaries_dir is not None
+    assert config.runs_dir is not None
+
+    # --- Load knowledge index ---
+    knowledge_match: dict[str, Any] | None = None
+    if config.knowledge_reuse:
+        print("Loading knowledge from prior goals...")
+        knowledge_index: list[dict[str, Any]] = load_knowledge_index(
+            config.goal_summaries_dir, config.tasks_dir, restore_fn
+        )
+        print(f"  Loaded {len(knowledge_index)} prior goal(s)")
+    else:
+        knowledge_index = []
+        print("Knowledge reuse disabled")
+
+    # --- Determine the task ---
+    goal_path: Path | None = task.goal_path
+    prompt: str
+    task_name: str
+    phases: list[dict[str, str]]
+
+    if goal_path is not None:
+        if not goal_path.exists():
+            print(f"Goal summary file not found: {goal_path}")
+            return RunResult()
+        print(f"Loading goal from: {goal_path}")
+        prompt, task_name, phases = load_goal_summary(
+            goal_path, config.tasks_dir, restore_fn
+        )
+        print(f"Task: {prompt}")
+        print(f"Task name: {task_name}")
+
+        if knowledge_index:
+            replay_file: str = goal_path.name
+            filtered_index: list[dict[str, Any]] = [
+                g for g in knowledge_index if g["goal_file"] != replay_file
+            ]
+            if filtered_index:
+                print("\nFinding relevant knowledge from other goals...")
+                knowledge_match = find_relevant_knowledge(
+                    prompt, filtered_index, client,
+                    config.get_model("knowledge_matching"),
+                )
+            else:
+                print("  No other goals to learn from")
+    else:
+        prompt = task.prompt or ""
+        if not prompt:
+            print("No task provided.")
+            return RunResult()
+        print()
+        print("Generating task name...")
+        task_name = generate_task_name(
+            prompt, client, config.get_model("task_naming")
+        )
+        print(f"Task name: {task_name}")
+
+        if knowledge_index:
+            print("\nFinding relevant knowledge from prior goals...")
+            knowledge_match = find_relevant_knowledge(
+                prompt, knowledge_index, client,
+                config.get_model("knowledge_matching"),
+            )
+
+        print()
+        print("Decomposing task into phases...")
+        phases = decompose_task(
+            prompt, config.base_url, cred.email, cred.password,
+            config.tasks_dir, client, restore_fn,
+            config.get_model("task_decomposition"),
+            knowledge_match=knowledge_match,
+        )
+
+    print(f"Planned {len(phases)} phases:")
+    for i, p in enumerate(phases, 1):
+        print(f"  {i}. {p['name']}")
+    print()
+
+    # Create run directory
+    run_dir: Path = make_run_dir(config.runs_dir, task_name)
+
+    event_log: Path = run_dir / "event_log.txt"
+    conversation_log: Path = run_dir / "conversation_log.json"
+    summaries_path: Path = run_dir / "phase_summaries.json"
+    problem_log: Path = run_dir / "problem_log.txt"
+    report_path: Path = config.goal_summaries_dir / f"{task_name}-task.json"
+
+    # --- Execute ---
+    event_log.write_text("")
+    log_event(event_log, "=" * 60)
+    log_event(event_log, f"WORKFLOW START: {task_name}")
+    log_event(event_log, f"Run directory: {run_dir}")
+    log_event(event_log, f"Prompt: {prompt}")
+    log_event(event_log, f"Target: {config.base_url}")
+    log_event(event_log, "=" * 60)
+
+    for line in format_phase_plan(phases):
+        log_event(event_log, line)
+
+    if knowledge_match:
+        for line in format_knowledge_match(knowledge_match):
+            log_event(event_log, line)
+
+    own_browser: bool = browser is None
+    if browser is None:
+        browser = Browser(headless=config.headless, keep_alive=True)
+    llm: ChatBrowserUse = ChatBrowserUse()
+
+    all_summaries: list[dict[str, str]] = []
+    phase_results: list[PhaseResult] = []
+    all_screenshots: list[ScreenshotRecord] = []
+
+    try:
+        prior_summaries: list[dict[str, str]] = []
+
+        for phase in phases:
+            cross_obs: list[str] | None = (
+                knowledge_match["relevant_observations"] if knowledge_match else None
+            )
+            augmented_task: str = build_augmented_task(
+                phase["task"], prior_summaries, restore_fn,
+                cross_goal_observations=cross_obs,
+            )
+            augmented_task_truncated: str = (
+                augmented_task[:1000] + "..." if len(augmented_task) > 1000 else augmented_task
+            )
+            log_event(event_log, f"Task for '{phase['name']}':\n{augmented_task_truncated}")
+
+            success: bool
+            result: AgentHistoryList[Any]
+            success, result = await run_phase(
+                phase["name"], augmented_task, llm, browser,
+                conversation_log, event_log, problem_log, run_dir,
+            )
+
+            log_event(event_log, f"Summarizing phase '{phase['name']}'...")
+            summary: str = summarize_phase(
+                phase["name"], phase["task"], result, success,
+                client, config.get_model("summarization"),
+            )
+            _extract_and_log_observations(summary, phase["name"], problem_log)
+
+            phase_slug: str = phase_name_to_slug(phase["name"])
+            subtask_path: Path = config.tasks_dir / f"{phase_slug}.txt"
+            if goal_path and config.update_tasks:
+                subtask_path.write_text(sanitize_fn(summary))
+            elif config.update_tasks:
+                subtask_path = safe_write_path(subtask_path)
+                subtask_path.write_text(sanitize_fn(summary))
+            log_event(event_log, f"Subtask summary saved to {subtask_path}")
+
+            phase_record: dict[str, str] = {
+                "name": phase["name"],
+                "outcome": "SUCCESS" if success else "FAILED",
+                "summary": summary,
+                "filename": subtask_path.name,
+            }
+            prior_summaries.append(phase_record)
+            all_summaries.append(phase_record)
+            phase_results.append(PhaseResult(
+                name=phase["name"],
+                outcome="SUCCESS" if success else "FAILED",
+                summary=summary,
+                filename=subtask_path.name,
+            ))
+
+            summary_truncated: str = summary[:500] + "..." if len(summary) > 500 else summary
+            summary_truncated = "\n".join(
+                [f"  PHASE {phase['name']} SUMMARY:\n{line}" for line in summary_truncated.split("\n")]
+            )
+            log_event(event_log, f"PHASE SUMMARY ({phase['name']}):\n{summary_truncated}")
+
+            if not success:
+                log_event(event_log, f"ABORTING: phase '{phase['name']}' failed.")
+                break
+        else:
+            log_event(event_log, "ALL PHASES COMPLETED SUCCESSFULLY.")
+
+    except Exception as e:
+        log_event(event_log, f"UNEXPECTED ERROR: {e}")
+        log_problem(problem_log, f"UNEXPECTED ERROR: {e}")
+        try:
+            page = await browser.get_current_page()
+            unexpected_screenshot: str = str(run_dir / "failure_unexpected.png")
+            await page.screenshot(unexpected_screenshot)
+            log_event(event_log, f"Failure screenshot saved to {unexpected_screenshot}")
+        except Exception as screenshot_err:
+            log_problem(problem_log, f"Could not save unexpected-error screenshot: {screenshot_err}")
+    finally:
+        log_event(event_log, "WORKFLOW END")
+        log_event(event_log, f"Conversation log saved to {conversation_log}")
+        if problem_log.exists():
+            log_event(event_log, f"Problem log saved to {problem_log}")
+
+        summaries_path.write_text(sanitize_fn(json.dumps(all_summaries, indent=2)))
+        log_event(event_log, f"Phase summaries saved to {summaries_path}")
+
+        if all_summaries:
+            if goal_path and config.update_summary:
+                print("\nGenerating task report...")
+                report: dict[str, Any] = generate_task_report(
+                    task_name, prompt, all_summaries, client,
+                    config.get_model("summarization"),
+                )
+                existing_data: dict[str, Any] = json.loads(goal_path.read_text())
+                existing_obs: list[str | dict[str, str]] = existing_data.get("key_observations", [])
+                new_obs: list[str] = report.get("key_observations", [])
+                print("Merging observations with existing goal summary...")
+                merged_obs: list[dict[str, str]] = merge_observations(
+                    existing_obs, new_obs, client,
+                    config.get_model("classification"),
+                )
+                print("Classifying observations...")
+                classified_obs: list[dict[str, str]] = classify_observations(
+                    prompt, merged_obs, client,
+                    config.get_model("classification"),
+                )
+                existing_data["key_observations"] = classified_obs
+                existing_data["subtasks"] = report["subtasks"]
+                goal_path.write_text(sanitize_fn(json.dumps(existing_data, indent=2)))
+                num_errors: int = sum(1 for o in classified_obs if o["severity"] == "error")
+                num_warnings: int = len(classified_obs) - num_errors
+                log_event(event_log, f"Updated goal summary: {goal_path} ({num_errors} errors, {num_warnings} warnings)")
+                print(f"Updated goal summary: {goal_path} ({num_errors} errors, {num_warnings} warnings)")
+            elif config.update_summary:
+                print("\nGenerating task report...")
+                report = generate_task_report(
+                    task_name, prompt, all_summaries, client,
+                    config.get_model("summarization"),
+                )
+                print("Classifying observations...")
+                classified_obs = classify_observations(
+                    prompt, report.get("key_observations", []), client,
+                    config.get_model("classification"),
+                )
+                report["key_observations"] = classified_obs
+                report_path = safe_write_path(report_path)
+                report_path.write_text(sanitize_fn(json.dumps(report, indent=2)))
+                num_errors = sum(1 for o in classified_obs if o["severity"] == "error")
+                num_warnings = len(classified_obs) - num_errors
+                log_event(event_log, f"Task report saved to {report_path} ({num_errors} errors, {num_warnings} warnings)")
+                print(f"Task report saved to {report_path} ({num_errors} errors, {num_warnings} warnings)")
+
+        # Write run metadata
+        write_run_metadata(
+            run_dir=run_dir,
+            task_name=task_name,
+            prompt=prompt,
+            base_url=config.base_url,
+            credential_profile=config.active_credential_profile,
+            phases=[
+                {"name": s["name"], "outcome": s["outcome"], "screenshots": []}
+                for s in all_summaries
+            ],
+            screenshots=all_screenshots,
+        )
+
+        if own_browser:
+            if not config.auto_close:
+                input("\nPress Enter to close the browser...")
+            await browser.stop()
+
+    return RunResult(
+        task_name=task_name,
+        phases=phase_results,
+        screenshots=all_screenshots,
+        run_dir=run_dir,
+    )
+
+
+async def run_multiple(
+    tasks: list[TaskSpec],
+    config: SparkyConfig,
+    shared_session: bool = False,
+    parallel: int = 1,
+) -> list[RunResult]:
+    """Run multiple tasks sequentially or in parallel.
+
+    Args:
+        tasks: List of task specifications.
+        config: Configuration.
+        shared_session: If True, keep the same browser across tasks.
+        parallel: Number of concurrent browser sessions (future use).
+
+    Returns:
+        A list of ``RunResult`` for each task.
+    """
+    client: anthropic.Anthropic = anthropic.Anthropic()
+    results: list[RunResult] = []
+
+    browser: Browser | None = None
+    if shared_session:
+        browser = Browser(headless=config.headless, keep_alive=True)
+
+    try:
+        if parallel > 1 and not shared_session:
+            # Concurrent execution (each with own browser)
+            async def _run_one(t: TaskSpec) -> RunResult:
+                return await run_single(t, config, client)
+
+            results = await asyncio.gather(*[_run_one(t) for t in tasks])
+            results = list(results)
+        else:
+            # Sequential execution
+            for task in tasks:
+                result = await run_single(task, config, client, browser)
+                results.append(result)
+    finally:
+        if shared_session and browser is not None:
+            if not config.auto_close:
+                input("\nPress Enter to close the browser...")
+            await browser.stop()
+
+    # Print aggregated summary
+    print("\n" + "=" * 60)
+    print("  Run Summary")
+    print("=" * 60)
+    for i, result in enumerate(results, 1):
+        status = "PASS" if result.all_phases_succeeded else "FAIL"
+        print(f"  {i}. {result.task_name}: {status} ({len(result.phases)} phases)")
+    total_pass = sum(1 for r in results if r.all_phases_succeeded)
+    print(f"\n  {total_pass}/{len(results)} tasks passed")
+
+    return results

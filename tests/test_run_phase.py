@@ -10,6 +10,11 @@ import pytest
 
 import sparky_runner
 
+# The actual run_phase lives in sparky_runner.execution, so patches
+# must target that module for Agent and extract_phase_history.
+_AGENT_PATCH = "sparky_runner.execution.Agent"
+_HISTORY_PATCH = "sparky_runner.execution.extract_phase_history"
+
 
 def _make_history_item(error: str | None = None) -> MagicMock:
     """Build a minimal mock of one history step."""
@@ -46,8 +51,8 @@ class TestRunPhase:
 
         agent_result = _make_agent_result(done=True, successful=True)
 
-        with patch("sparky_runner.Agent") as MockAgent, \
-             patch("sparky_runner.extract_phase_history", return_value="step log"):
+        with patch(_AGENT_PATCH) as MockAgent, \
+             patch(_HISTORY_PATCH, return_value="step log"):
             mock_agent_instance = MockAgent.return_value
             mock_agent_instance.run = AsyncMock(return_value=agent_result)
 
@@ -72,8 +77,8 @@ class TestRunPhase:
         mock_browser = MagicMock()
         mock_browser.get_current_page = AsyncMock(return_value=mock_page)
 
-        with patch("sparky_runner.Agent") as MockAgent, \
-             patch("sparky_runner.extract_phase_history", return_value="step log"):
+        with patch(_AGENT_PATCH) as MockAgent, \
+             patch(_HISTORY_PATCH, return_value="step log"):
             mock_agent_instance = MockAgent.return_value
             mock_agent_instance.run = AsyncMock(return_value=agent_result)
 
@@ -95,8 +100,8 @@ class TestRunPhase:
         history_item = _make_history_item(error="Element not found")
         agent_result = _make_agent_result(done=True, successful=True, history=[history_item])
 
-        with patch("sparky_runner.Agent") as MockAgent, \
-             patch("sparky_runner.extract_phase_history", return_value="log"):
+        with patch(_AGENT_PATCH) as MockAgent, \
+             patch(_HISTORY_PATCH, return_value="log"):
             mock_agent_instance = MockAgent.return_value
             mock_agent_instance.run = AsyncMock(return_value=agent_result)
 
@@ -119,8 +124,8 @@ class TestRunPhase:
         mock_browser = MagicMock()
         mock_browser.get_current_page = AsyncMock(return_value=mock_page)
 
-        with patch("sparky_runner.Agent") as MockAgent, \
-             patch("sparky_runner.extract_phase_history", return_value="log"):
+        with patch(_AGENT_PATCH) as MockAgent, \
+             patch(_HISTORY_PATCH, return_value="log"):
             mock_agent_instance = MockAgent.return_value
             mock_agent_instance.run = AsyncMock(return_value=agent_result)
 
@@ -144,8 +149,8 @@ class TestRunPhase:
         mock_browser = MagicMock()
         mock_browser.get_current_page = AsyncMock(side_effect=RuntimeError("browser gone"))
 
-        with patch("sparky_runner.Agent") as MockAgent, \
-             patch("sparky_runner.extract_phase_history", return_value="log"):
+        with patch(_AGENT_PATCH) as MockAgent, \
+             patch(_HISTORY_PATCH, return_value="log"):
             mock_agent_instance = MockAgent.return_value
             mock_agent_instance.run = AsyncMock(return_value=agent_result)
 
@@ -171,8 +176,8 @@ class TestRunPhase:
         mock_browser = MagicMock()
         mock_browser.get_current_page = AsyncMock(return_value=mock_page)
 
-        with patch("sparky_runner.Agent") as MockAgent, \
-             patch("sparky_runner.extract_phase_history", return_value="log"):
+        with patch(_AGENT_PATCH) as MockAgent, \
+             patch(_HISTORY_PATCH, return_value="log"):
             mock_agent_instance = MockAgent.return_value
             mock_agent_instance.run = AsyncMock(return_value=agent_result)
 
@@ -182,3 +187,30 @@ class TestRunPhase:
             )
 
         assert success is False
+
+    @pytest.mark.asyncio
+    async def test_step_limit_logged_as_warning(self, tmp_path: Path) -> None:
+        """When the agent exhausts all 50 steps without finishing, log a warning."""
+        event_log = tmp_path / "event.log"
+        problem_log = tmp_path / "problem.log"
+        conversation_log = tmp_path / "conv.json"
+
+        history = [_make_history_item() for _ in range(50)]
+        agent_result = _make_agent_result(done=False, successful=False, history=history)
+
+        mock_page = AsyncMock()
+        mock_browser = MagicMock()
+        mock_browser.get_current_page = AsyncMock(return_value=mock_page)
+
+        with patch(_AGENT_PATCH) as MockAgent, \
+             patch(_HISTORY_PATCH, return_value="log"):
+            mock_agent_instance = MockAgent.return_value
+            mock_agent_instance.run = AsyncMock(return_value=agent_result)
+
+            await sparky_runner.run_phase(
+                "Search", "Find stuff", MagicMock(), mock_browser,
+                conversation_log, event_log, problem_log, tmp_path,
+            )
+
+        assert "exhausted step limit" in event_log.read_text()
+        assert "STEP LIMIT" in problem_log.read_text()

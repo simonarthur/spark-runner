@@ -125,6 +125,25 @@ class TestDecomposeTask:
         assert "Login" in result[0]["task"]
         assert "reuse" not in result[0]
 
+    def test_observations_included_in_prompt(self, mock_summary_client: MagicMock) -> None:
+        """Relevant observations from prior runs are surfaced in the decomposition prompt."""
+        phases = [{"name": "Login", "task": "Log in"}]
+        mock_summary_client.messages.create.return_value = make_llm_response(json.dumps(phases))
+
+        sparky_runner.decompose_task(
+            "Create a campaign",
+            knowledge_match={
+                "reusable_subtasks": [],
+                "relevant_observations": ["Express tools auto-select platforms"],
+                "coverage_notes": "",
+            },
+        )
+
+        call_args = mock_summary_client.messages.create.call_args
+        prompt_text: str = call_args.kwargs["messages"][0]["content"]
+        assert "Express tools auto-select platforms" in prompt_text
+        assert "OBSERVATIONS FROM PRIOR RUNS" in prompt_text
+
 
 # ── generate_task_report ─────────────────────────────────────────────────
 
