@@ -32,9 +32,142 @@ class TestTopLevelCLI:
         assert "goals" in result.output
         assert "results" in result.output
 
+    def test_help_shows_data_dir(self, runner: click.testing.CliRunner) -> None:
+        result = runner.invoke(cli, ["--help"])
+        assert "--data-dir" in result.output
+        assert "Sparky Runner home directory" in result.output
+
+    def test_help_shows_config(self, runner: click.testing.CliRunner) -> None:
+        result = runner.invoke(cli, ["--help"])
+        assert "--config" in result.output
+
     def test_unknown_subcommand(self, runner: click.testing.CliRunner) -> None:
         result = runner.invoke(cli, ["nonexistent"])
         assert result.exit_code != 0
+
+
+# ── --data-dir propagation ───────────────────────────────────────────────
+
+
+class TestDataDirPropagation:
+    """--data-dir on the top-level group propagates to all subcommands."""
+
+    @patch("sparky_runner.cli.build_config")
+    @patch("sparky_runner.orchestrator.run_single", new_callable=AsyncMock)
+    def test_data_dir_propagates_to_run(
+        self,
+        mock_run: AsyncMock,
+        mock_config: MagicMock,
+        runner: click.testing.CliRunner,
+        tmp_path: Path,
+    ) -> None:
+        mock_config.return_value = MagicMock(base_url="https://x.com")
+        result = runner.invoke(
+            cli, ["--data-dir", str(tmp_path), "run", "-p", "test"]
+        )
+        assert result.exit_code == 0
+        assert mock_config.call_args.kwargs["data_dir"] == tmp_path
+
+    @patch("sparky_runner.cli.build_config")
+    def test_data_dir_propagates_to_goals_list(
+        self,
+        mock_config: MagicMock,
+        runner: click.testing.CliRunner,
+        tmp_path: Path,
+    ) -> None:
+        mock_cfg = MagicMock()
+        mock_cfg.goal_summaries_dir = tmp_path
+        mock_config.return_value = mock_cfg
+        with patch("sparky_runner.goals.list_goals"):
+            result = runner.invoke(
+                cli, ["--data-dir", str(tmp_path), "goals", "list"]
+            )
+        assert result.exit_code == 0
+        assert mock_config.call_args.kwargs["data_dir"] == tmp_path
+
+    @patch("sparky_runner.cli.build_config")
+    def test_data_dir_propagates_to_results_list(
+        self,
+        mock_config: MagicMock,
+        runner: click.testing.CliRunner,
+        tmp_path: Path,
+    ) -> None:
+        mock_cfg = MagicMock()
+        mock_cfg.runs_dir = tmp_path
+        mock_config.return_value = mock_cfg
+        with patch("sparky_runner.results.list_runs", return_value=[]):
+            result = runner.invoke(
+                cli, ["--data-dir", str(tmp_path), "results", "list"]
+            )
+        assert result.exit_code == 0
+        assert mock_config.call_args.kwargs["data_dir"] == tmp_path
+
+    @patch("sparky_runner.cli.build_config")
+    def test_data_dir_propagates_to_results_errors(
+        self,
+        mock_config: MagicMock,
+        runner: click.testing.CliRunner,
+        tmp_path: Path,
+    ) -> None:
+        mock_cfg = MagicMock()
+        mock_cfg.runs_dir = tmp_path
+        mock_config.return_value = mock_cfg
+        with patch("sparky_runner.results.list_runs", return_value=[]):
+            result = runner.invoke(
+                cli, ["--data-dir", str(tmp_path), "results", "errors"]
+            )
+        assert result.exit_code == 0
+        assert mock_config.call_args.kwargs["data_dir"] == tmp_path
+
+    @patch("sparky_runner.cli.build_config")
+    def test_data_dir_propagates_to_goals_classify(
+        self,
+        mock_config: MagicMock,
+        runner: click.testing.CliRunner,
+        tmp_path: Path,
+    ) -> None:
+        mock_cfg = MagicMock()
+        mock_cfg.goal_summaries_dir = tmp_path
+        mock_cfg.get_model.return_value = MagicMock()
+        mock_config.return_value = mock_cfg
+        with patch("anthropic.Anthropic"), \
+             patch("sparky_runner.goals.classify_existing_goals"):
+            result = runner.invoke(
+                cli, ["--data-dir", str(tmp_path), "goals", "classify"]
+            )
+        assert result.exit_code == 0
+        assert mock_config.call_args.kwargs["data_dir"] == tmp_path
+
+    @patch("sparky_runner.cli.build_config")
+    def test_data_dir_propagates_to_goals_orphans(
+        self,
+        mock_config: MagicMock,
+        runner: click.testing.CliRunner,
+        tmp_path: Path,
+    ) -> None:
+        mock_cfg = MagicMock()
+        mock_cfg.tasks_dir = tmp_path
+        mock_cfg.goal_summaries_dir = tmp_path
+        mock_config.return_value = mock_cfg
+        with patch("sparky_runner.storage.find_orphan_tasks"):
+            result = runner.invoke(
+                cli, ["--data-dir", str(tmp_path), "goals", "orphans"]
+            )
+        assert result.exit_code == 0
+        assert mock_config.call_args.kwargs["data_dir"] == tmp_path
+
+    @patch("sparky_runner.cli.build_config")
+    @patch("sparky_runner.orchestrator.run_single", new_callable=AsyncMock)
+    def test_no_data_dir_passes_none(
+        self,
+        mock_run: AsyncMock,
+        mock_config: MagicMock,
+        runner: click.testing.CliRunner,
+    ) -> None:
+        mock_config.return_value = MagicMock(base_url="https://x.com")
+        result = runner.invoke(cli, ["run", "-p", "test"])
+        assert result.exit_code == 0
+        assert mock_config.call_args.kwargs["data_dir"] is None
 
 
 # ── run: URL validation ─────────────────────────────────────────────────
@@ -115,6 +248,64 @@ class TestRunGoalFileValidation:
         mock_config.return_value = MagicMock(base_url="https://x.com")
         result = runner.invoke(cli, ["run", str(goal)])
         assert result.exit_code == 0
+
+    @patch("sparky_runner.cli.build_config")
+    @patch("sparky_runner.orchestrator.run_single", new_callable=AsyncMock)
+    def test_goal_name_resolved_from_goal_summaries_dir(
+        self,
+        mock_run: AsyncMock,
+        mock_config: MagicMock,
+        runner: click.testing.CliRunner,
+        tmp_path: Path,
+    ) -> None:
+        """A bare goal name resolves to a file in goal_summaries_dir."""
+        gs_dir = tmp_path / "goal_summaries"
+        gs_dir.mkdir()
+        goal = gs_dir / "my-task.json"
+        goal.write_text("{}")
+        mock_cfg = MagicMock(base_url="https://x.com", goal_summaries_dir=gs_dir)
+        mock_config.return_value = mock_cfg
+        result = runner.invoke(cli, ["run", "my-task.json"])
+        assert result.exit_code == 0
+        task_spec = mock_run.call_args.args[0]
+        assert task_spec.goal_path == goal
+
+    @patch("sparky_runner.cli.build_config")
+    @patch("sparky_runner.orchestrator.run_single", new_callable=AsyncMock)
+    def test_goal_name_without_extension_resolved(
+        self,
+        mock_run: AsyncMock,
+        mock_config: MagicMock,
+        runner: click.testing.CliRunner,
+        tmp_path: Path,
+    ) -> None:
+        """A bare goal name without .json still resolves."""
+        gs_dir = tmp_path / "goal_summaries"
+        gs_dir.mkdir()
+        goal = gs_dir / "login-test.json"
+        goal.write_text("{}")
+        mock_cfg = MagicMock(base_url="https://x.com", goal_summaries_dir=gs_dir)
+        mock_config.return_value = mock_cfg
+        result = runner.invoke(cli, ["run", "login-test"])
+        assert result.exit_code == 0
+        task_spec = mock_run.call_args.args[0]
+        assert task_spec.goal_path == goal
+
+    @patch("sparky_runner.cli.build_config")
+    def test_goal_name_not_found_in_goal_summaries_dir(
+        self,
+        mock_config: MagicMock,
+        runner: click.testing.CliRunner,
+        tmp_path: Path,
+    ) -> None:
+        """A name that doesn't exist anywhere still errors."""
+        gs_dir = tmp_path / "goal_summaries"
+        gs_dir.mkdir()
+        mock_cfg = MagicMock(base_url="https://x.com", goal_summaries_dir=gs_dir)
+        mock_config.return_value = mock_cfg
+        result = runner.invoke(cli, ["run", "nonexistent-goal"])
+        assert result.exit_code != 0
+        assert "Goal file not found" in result.output
 
 
 # ── run: --model validation ──────────────────────────────────────────────
@@ -318,31 +509,89 @@ class TestResultsSubcommandErrors:
         assert result.exit_code != 0
         assert "Usage" in result.output
 
-    def test_results_show_missing_path(
-        self, runner: click.testing.CliRunner
+    @patch("sparky_runner.cli.build_config")
+    def test_results_show_missing_path_lists_runs(
+        self, mock_config: MagicMock, runner: click.testing.CliRunner, tmp_path: Path
     ) -> None:
+        """Missing RUN_PATH lists available runs."""
+        runs_dir = tmp_path / "runs"
+        task_dir = runs_dir / "my-task"
+        run_dir = task_dir / "2026-01-01_12-00-00"
+        run_dir.mkdir(parents=True)
+        mock_config.return_value = MagicMock(runs_dir=runs_dir)
         result = runner.invoke(cli, ["results", "show"])
         assert result.exit_code != 0
-        assert "Missing argument" in result.output
+        assert "my-task/2026-01-01_12-00-00" in result.output
 
-    def test_results_show_nonexistent_path(
-        self, runner: click.testing.CliRunner
+    @patch("sparky_runner.cli.build_config")
+    def test_results_show_missing_path_no_runs(
+        self, mock_config: MagicMock, runner: click.testing.CliRunner, tmp_path: Path
     ) -> None:
-        result = runner.invoke(cli, ["results", "show", "/no/such/path"])
+        runs_dir = tmp_path / "runs"
+        runs_dir.mkdir()
+        mock_config.return_value = MagicMock(runs_dir=runs_dir)
+        result = runner.invoke(cli, ["results", "show"])
         assert result.exit_code != 0
+        assert "No runs found" in result.output
 
-    def test_results_screenshots_missing_path(
-        self, runner: click.testing.CliRunner
+    @patch("sparky_runner.cli.build_config")
+    def test_results_show_nonexistent_path_lists_runs(
+        self, mock_config: MagicMock, runner: click.testing.CliRunner, tmp_path: Path
     ) -> None:
+        """Bad RUN_PATH shows available runs in the error."""
+        runs_dir = tmp_path / "runs"
+        task_dir = runs_dir / "login-task"
+        run_dir = task_dir / "2026-02-01_08-00-00"
+        run_dir.mkdir(parents=True)
+        mock_config.return_value = MagicMock(runs_dir=runs_dir)
+        result = runner.invoke(cli, ["results", "show", "bad/path"])
+        assert result.exit_code != 0
+        assert "Run not found" in result.output
+        assert "login-task/2026-02-01_08-00-00" in result.output
+
+    @patch("sparky_runner.cli.build_config")
+    def test_results_show_resolves_relative_to_runs_dir(
+        self, mock_config: MagicMock, runner: click.testing.CliRunner, tmp_path: Path
+    ) -> None:
+        """A relative run path like 'task/timestamp' resolves inside runs_dir."""
+        runs_dir = tmp_path / "runs"
+        run_dir = runs_dir / "my-task" / "2026-03-03_09-00-00"
+        run_dir.mkdir(parents=True)
+        mock_config.return_value = MagicMock(runs_dir=runs_dir)
+        with patch("sparky_runner.results.get_run_detail") as mock_detail, \
+             patch("sparky_runner.results.format_run_detail", return_value="detail"):
+            mock_detail.return_value = MagicMock(
+                screenshots=[], phases=[], task_name="my-task",
+            )
+            result = runner.invoke(
+                cli, ["results", "show", "my-task/2026-03-03_09-00-00"]
+            )
+        assert result.exit_code == 0
+        mock_detail.assert_called_once_with(run_dir)
+
+    @patch("sparky_runner.cli.build_config")
+    def test_results_screenshots_missing_path_lists_runs(
+        self, mock_config: MagicMock, runner: click.testing.CliRunner, tmp_path: Path
+    ) -> None:
+        runs_dir = tmp_path / "runs"
+        task_dir = runs_dir / "search-task"
+        run_dir = task_dir / "2026-01-15_10-30-00"
+        run_dir.mkdir(parents=True)
+        mock_config.return_value = MagicMock(runs_dir=runs_dir)
         result = runner.invoke(cli, ["results", "screenshots"])
         assert result.exit_code != 0
-        assert "Missing argument" in result.output
+        assert "search-task/2026-01-15_10-30-00" in result.output
 
+    @patch("sparky_runner.cli.build_config")
     def test_results_screenshots_nonexistent_path(
-        self, runner: click.testing.CliRunner
+        self, mock_config: MagicMock, runner: click.testing.CliRunner, tmp_path: Path
     ) -> None:
+        runs_dir = tmp_path / "runs"
+        runs_dir.mkdir()
+        mock_config.return_value = MagicMock(runs_dir=runs_dir)
         result = runner.invoke(cli, ["results", "screenshots", "/no/such/path"])
         assert result.exit_code != 0
+        assert "Run not found" in result.output
 
 
 # ── run help ─────────────────────────────────────────────────────────────

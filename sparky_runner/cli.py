@@ -24,10 +24,195 @@ def _parse_model_overrides(values: tuple[str, ...]) -> dict[str, str]:
     return result
 
 
+def _resolve_goal_file(name: str, goal_summaries_dir: Path | None) -> Path:
+    """Resolve a goal file argument to an existing path.
+
+    Tries in order:
+    1. Literal path (absolute or relative to cwd)
+    2. Name inside ``goal_summaries_dir`` (with or without ``.json``)
+    """
+    literal = Path(name)
+    if literal.exists():
+        return literal
+
+    if goal_summaries_dir is not None:
+        # Try as-is inside goal_summaries_dir
+        in_dir = goal_summaries_dir / name
+        if in_dir.exists():
+            return in_dir
+        # Try appending .json
+        with_ext = goal_summaries_dir / f"{name}.json"
+        if with_ext.exists():
+            return with_ext
+
+    raise click.BadParameter(
+        f"Goal file not found: {name}",
+        param_hint="'GOAL_FILES'",
+    )
+
+
+def _resolve_run_path(name: str | None, runs_dir: Path | None) -> Path:
+    """Resolve a run path argument to an existing directory.
+
+    Tries in order:
+    1. If *name* is ``None``, list available runs and exit with an error.
+    2. Literal path (absolute or relative to cwd).
+    3. Relative path inside ``runs_dir``.
+
+    When no match is found, lists available runs in the error message.
+    """
+    available: list[str] = []
+    if runs_dir is not None and runs_dir.exists():
+        for task_dir in sorted(runs_dir.iterdir()):
+            if not task_dir.is_dir():
+                continue
+            for run_dir in sorted(task_dir.iterdir(), reverse=True):
+                if run_dir.is_dir():
+                    available.append(f"{task_dir.name}/{run_dir.name}")
+
+    if name is None:
+        if available:
+            listing = "\n".join(f"  {r}" for r in available)
+            raise click.UsageError(
+                f"Missing argument 'RUN_PATH'.\n\nAvailable runs:\n{listing}"
+            )
+        raise click.UsageError("Missing argument 'RUN_PATH'. No runs found.")
+
+    # Try literal path
+    literal = Path(name)
+    if literal.exists() and literal.is_dir():
+        return literal
+
+    # Try inside runs_dir
+    if runs_dir is not None:
+        in_dir = runs_dir / name
+        if in_dir.exists() and in_dir.is_dir():
+            return in_dir
+
+    hint = ""
+    if available:
+        listing = "\n".join(f"  {r}" for r in available)
+        hint = f"\n\nAvailable runs:\n{listing}"
+    raise click.BadParameter(
+        f"Run not found: {name}{hint}",
+        param_hint="'RUN_PATH'",
+    )
+
+
+def _build_config_for_completion(ctx: click.Context) -> SparkyConfig:
+    """Build a config from whatever context is available during tab completion."""
+    data_dir = _get_data_dir(ctx)
+    config_path = _get_config_path(ctx)
+    return build_config(
+        config_path=Path(config_path) if config_path else None,
+        data_dir=Path(data_dir) if data_dir else None,
+    )
+
+
+def _complete_run_path(
+    ctx: click.Context, param: click.Parameter, incomplete: str,
+) -> list[click.shell_completion.CompletionItem]:
+    """Tab-complete run paths (task/timestamp) from runs_dir."""
+    try:
+        config = _build_config_for_completion(ctx)
+        runs_dir = config.runs_dir
+    except Exception:
+        return []
+
+    if runs_dir is None or not runs_dir.exists():
+        return []
+
+    candidates: list[str] = []
+    for task_dir in sorted(runs_dir.iterdir()):
+        if not task_dir.is_dir():
+            continue
+        for run_dir in sorted(task_dir.iterdir(), reverse=True):
+            if run_dir.is_dir():
+                candidates.append(f"{task_dir.name}/{run_dir.name}")
+
+    return [
+        click.shell_completion.CompletionItem(c)
+        for c in candidates
+        if c.startswith(incomplete)
+    ]
+
+
+def _complete_goal_file(
+    ctx: click.Context, param: click.Parameter, incomplete: str,
+) -> list[click.shell_completion.CompletionItem]:
+    """Tab-complete goal names from goal_summaries_dir."""
+    try:
+        config = _build_config_for_completion(ctx)
+        gs_dir = config.goal_summaries_dir
+    except Exception:
+        return []
+
+    if gs_dir is None or not gs_dir.exists():
+        return []
+
+    candidates: list[str] = []
+    for f in sorted(gs_dir.iterdir()):
+        if f.is_file() and f.suffix == ".json":
+            # Offer both with and without .json
+            candidates.append(f.stem)
+            candidates.append(f.name)
+
+    return [
+        click.shell_completion.CompletionItem(c)
+        for c in candidates
+        if c.startswith(incomplete)
+    ]
+
+
+def _complete_goal_name(
+    ctx: click.Context, param: click.Parameter, incomplete: str,
+) -> list[click.shell_completion.CompletionItem]:
+    """Tab-complete goal names (without .json) from goal_summaries_dir."""
+    try:
+        config = _build_config_for_completion(ctx)
+        gs_dir = config.goal_summaries_dir
+    except Exception:
+        return []
+
+    if gs_dir is None or not gs_dir.exists():
+        return []
+
+    return [
+        click.shell_completion.CompletionItem(f.stem)
+        for f in sorted(gs_dir.iterdir())
+        if f.is_file() and f.suffix == ".json" and f.stem.startswith(incomplete)
+    ]
+
+
+def _get_data_dir(ctx: click.Context) -> str | None:
+    """Walk up the context chain to find --data-dir."""
+    while ctx is not None:
+        if ctx.params.get("data_dir") is not None:
+            return ctx.params["data_dir"]
+        ctx = ctx.parent  # type: ignore[assignment]
+    return None
+
+
+def _get_config_path(ctx: click.Context) -> str | None:
+    """Walk up the context chain to find --config."""
+    while ctx is not None:
+        if ctx.params.get("config_path") is not None:
+            return ctx.params["config_path"]
+        ctx = ctx.parent  # type: ignore[assignment]
+    return None
+
+
 @click.group(invoke_without_command=True)
+@click.option("--data-dir", type=click.Path(), default=None,
+              help="Sparky Runner home directory (tasks, goal summaries, runs). Default: ~/sparky_runner")
+@click.option("--config", "config_path", type=click.Path(), default=None,
+              help="Config file path")
 @click.pass_context
-def cli(ctx: click.Context) -> None:
+def cli(ctx: click.Context, data_dir: str | None, config_path: str | None) -> None:
     """SparkyAI Browser Automation Runner."""
+    ctx.ensure_object(dict)
+    ctx.obj["data_dir"] = data_dir
+    ctx.obj["config_path"] = config_path
     if ctx.invoked_subcommand is None:
         click.echo(ctx.get_help())
 
@@ -56,13 +241,12 @@ def _validate_url(
 @click.option("--headless", is_flag=True, help="Run browser in headless mode")
 @click.option("--credential-profile", default=None, help="Credential profile name")
 @click.option("--model", "model_strs", multiple=True, help="PURPOSE=MODEL_ID override")
-@click.option("--data-dir", type=click.Path(), default=None,
-              help="Sparky Runner home directory (tasks, goal summaries, runs). Default: ~/sparky_runner")
-@click.option("--config", "config_path", type=click.Path(), default=None, help="Config file path")
 @click.option("--shared-session", is_flag=True, help="Share browser session across tasks")
 @click.option("--parallel", type=int, default=1, help="Parallel execution count")
-@click.argument("goal_files", nargs=-1, type=click.Path())
+@click.argument("goal_files", nargs=-1, type=click.Path(), shell_complete=_complete_goal_file)
+@click.pass_context
 def run(
+    ctx: click.Context,
     prompts: tuple[str, ...],
     base_url: str | None,
     no_update_summary: bool,
@@ -72,13 +256,13 @@ def run(
     headless: bool,
     credential_profile: str | None,
     model_strs: tuple[str, ...],
-    data_dir: str | None,
-    config_path: str | None,
     shared_session: bool,
     parallel: int,
     goal_files: tuple[str, ...],
 ) -> None:
     """Run browser automation tasks."""
+    data_dir = _get_data_dir(ctx)
+    config_path = _get_config_path(ctx)
     model_overrides = _parse_model_overrides(model_strs) if model_strs else None
 
     config: SparkyConfig = build_config(
@@ -103,9 +287,7 @@ def run(
             credential_profile=credential_profile or "default",
         ))
     for gf in goal_files:
-        gf_path = Path(gf)
-        if not gf_path.exists():
-            raise click.BadParameter(f"Goal file not found: {gf}", param_hint="'GOAL_FILES'")
+        gf_path = _resolve_goal_file(gf, config.goal_summaries_dir)
         tasks.append(TaskSpec(
             goal_path=gf_path,
             credential_profile=credential_profile or "default",
@@ -137,16 +319,17 @@ def run(
 
 
 @cli.group()
-def goals() -> None:
+@click.pass_context
+def goals(ctx: click.Context) -> None:
     """Manage goals."""
 
 
 @goals.command("list")
-@click.option("--data-dir", type=click.Path(), default=None,
-              help="Sparky Runner home directory (tasks, goal summaries, runs). Default: ~/sparky_runner")
-@click.option("--config", "config_path", type=click.Path(), default=None)
-def goals_list(data_dir: str | None, config_path: str | None) -> None:
+@click.pass_context
+def goals_list(ctx: click.Context) -> None:
     """List all existing goals."""
+    data_dir = _get_data_dir(ctx)
+    config_path = _get_config_path(ctx)
     config = build_config(
         config_path=Path(config_path) if config_path else None,
         data_dir=Path(data_dir) if data_dir else None,
@@ -159,12 +342,12 @@ def goals_list(data_dir: str | None, config_path: str | None) -> None:
 
 
 @goals.command("show")
-@click.argument("goal_name")
-@click.option("--data-dir", type=click.Path(), default=None,
-              help="Sparky Runner home directory (tasks, goal summaries, runs). Default: ~/sparky_runner")
-@click.option("--config", "config_path", type=click.Path(), default=None)
-def goals_show(goal_name: str, data_dir: str | None, config_path: str | None) -> None:
+@click.argument("goal_name", shell_complete=_complete_goal_name)
+@click.pass_context
+def goals_show(ctx: click.Context, goal_name: str) -> None:
     """Show details for a specific goal."""
+    data_dir = _get_data_dir(ctx)
+    config_path = _get_config_path(ctx)
     config = build_config(
         config_path=Path(config_path) if config_path else None,
         data_dir=Path(data_dir) if data_dir else None,
@@ -177,15 +360,13 @@ def goals_show(goal_name: str, data_dir: str | None, config_path: str | None) ->
 
 
 @goals.command("delete")
-@click.argument("goal_name")
+@click.argument("goal_name", shell_complete=_complete_goal_name)
 @click.option("--force", is_flag=True, help="Skip confirmation")
-@click.option("--data-dir", type=click.Path(), default=None,
-              help="Sparky Runner home directory (tasks, goal summaries, runs). Default: ~/sparky_runner")
-@click.option("--config", "config_path", type=click.Path(), default=None)
-def goals_delete(
-    goal_name: str, force: bool, data_dir: str | None, config_path: str | None
-) -> None:
+@click.pass_context
+def goals_delete(ctx: click.Context, goal_name: str, force: bool) -> None:
     """Delete a goal and its unreferenced task files."""
+    data_dir = _get_data_dir(ctx)
+    config_path = _get_config_path(ctx)
     config = build_config(
         config_path=Path(config_path) if config_path else None,
         data_dir=Path(data_dir) if data_dir else None,
@@ -198,11 +379,11 @@ def goals_delete(
 
 
 @goals.command("classify")
-@click.option("--data-dir", type=click.Path(), default=None,
-              help="Sparky Runner home directory (tasks, goal summaries, runs). Default: ~/sparky_runner")
-@click.option("--config", "config_path", type=click.Path(), default=None)
-def goals_classify(data_dir: str | None, config_path: str | None) -> None:
+@click.pass_context
+def goals_classify(ctx: click.Context) -> None:
     """Classify observations in all existing goal summaries."""
+    data_dir = _get_data_dir(ctx)
+    config_path = _get_config_path(ctx)
     config = build_config(
         config_path=Path(config_path) if config_path else None,
         data_dir=Path(data_dir) if data_dir else None,
@@ -223,11 +404,11 @@ def goals_classify(data_dir: str | None, config_path: str | None) -> None:
 
 @goals.command("orphans")
 @click.option("--clean", is_flag=True, help="Delete orphan task files")
-@click.option("--data-dir", type=click.Path(), default=None,
-              help="Sparky Runner home directory (tasks, goal summaries, runs). Default: ~/sparky_runner")
-@click.option("--config", "config_path", type=click.Path(), default=None)
-def goals_orphans(clean: bool, data_dir: str | None, config_path: str | None) -> None:
+@click.pass_context
+def goals_orphans(ctx: click.Context, clean: bool) -> None:
     """List or clean orphan task files."""
+    data_dir = _get_data_dir(ctx)
+    config_path = _get_config_path(ctx)
     config = build_config(
         config_path=Path(config_path) if config_path else None,
         data_dir=Path(data_dir) if data_dir else None,
@@ -246,17 +427,18 @@ def goals_orphans(clean: bool, data_dir: str | None, config_path: str | None) ->
 
 
 @cli.group()
-def results() -> None:
+@click.pass_context
+def results(ctx: click.Context) -> None:
     """View and manage run results."""
 
 
 @results.command("list")
 @click.option("--task", "task_name", default=None, help="Filter by task name")
-@click.option("--data-dir", type=click.Path(), default=None,
-              help="Sparky Runner home directory (tasks, goal summaries, runs). Default: ~/sparky_runner")
-@click.option("--config", "config_path", type=click.Path(), default=None)
-def results_list(task_name: str | None, data_dir: str | None, config_path: str | None) -> None:
+@click.pass_context
+def results_list(ctx: click.Context, task_name: str | None) -> None:
     """List all runs."""
+    data_dir = _get_data_dir(ctx)
+    config_path = _get_config_path(ctx)
     config = build_config(
         config_path=Path(config_path) if config_path else None,
         data_dir=Path(data_dir) if data_dir else None,
@@ -274,22 +456,30 @@ def results_list(task_name: str | None, data_dir: str | None, config_path: str |
 
 
 @results.command("show")
-@click.argument("run_path", type=click.Path(exists=True))
-def results_show(run_path: str) -> None:
+@click.argument("run_path", required=False, default=None, shell_complete=_complete_run_path)
+@click.pass_context
+def results_show(ctx: click.Context, run_path: str | None) -> None:
     """Show full detail for a run."""
+    data_dir = _get_data_dir(ctx)
+    config_path = _get_config_path(ctx)
+    config = build_config(
+        config_path=Path(config_path) if config_path else None,
+        data_dir=Path(data_dir) if data_dir else None,
+    )
+    resolved = _resolve_run_path(run_path, config.runs_dir)
     from sparky_runner.results import format_run_detail, get_run_detail
 
-    detail = get_run_detail(Path(run_path))
+    detail = get_run_detail(resolved)
     print(format_run_detail(detail))
 
 
 @results.command("errors")
 @click.option("--task", "task_name", default=None, help="Filter by task name")
-@click.option("--data-dir", type=click.Path(), default=None,
-              help="Sparky Runner home directory (tasks, goal summaries, runs). Default: ~/sparky_runner")
-@click.option("--config", "config_path", type=click.Path(), default=None)
-def results_errors(task_name: str | None, data_dir: str | None, config_path: str | None) -> None:
+@click.pass_context
+def results_errors(ctx: click.Context, task_name: str | None) -> None:
     """Show only runs with errors."""
+    data_dir = _get_data_dir(ctx)
+    config_path = _get_config_path(ctx)
     config = build_config(
         config_path=Path(config_path) if config_path else None,
         data_dir=Path(data_dir) if data_dir else None,
@@ -307,12 +497,20 @@ def results_errors(task_name: str | None, data_dir: str | None, config_path: str
 
 
 @results.command("screenshots")
-@click.argument("run_path", type=click.Path(exists=True))
-def results_screenshots(run_path: str) -> None:
+@click.argument("run_path", required=False, default=None, shell_complete=_complete_run_path)
+@click.pass_context
+def results_screenshots(ctx: click.Context, run_path: str | None) -> None:
     """List screenshots for a run."""
+    data_dir = _get_data_dir(ctx)
+    config_path = _get_config_path(ctx)
+    config = build_config(
+        config_path=Path(config_path) if config_path else None,
+        data_dir=Path(data_dir) if data_dir else None,
+    )
+    resolved = _resolve_run_path(run_path, config.runs_dir)
     from sparky_runner.results import get_run_detail
 
-    detail = get_run_detail(Path(run_path))
+    detail = get_run_detail(resolved)
     all_ss = list(detail.screenshots)
     for phase in detail.phases:
         all_ss.extend(phase.screenshots)
@@ -338,17 +536,16 @@ def results_screenshots(run_path: str) -> None:
 @click.argument("source_path", type=click.Path())
 @click.option("--branch", default="main", help="Git branch for repo URLs")
 @click.option("--output-dir", type=click.Path(), default=None, help="Output directory")
-@click.option("--data-dir", type=click.Path(), default=None,
-              help="Sparky Runner home directory (tasks, goal summaries, runs). Default: ~/sparky_runner")
-@click.option("--config", "config_path", type=click.Path(), default=None)
+@click.pass_context
 def generate_goals_cmd(
+    ctx: click.Context,
     source_path: str,
     branch: str,
     output_dir: str | None,
-    data_dir: str | None,
-    config_path: str | None,
 ) -> None:
     """Generate test goals from frontend source code."""
+    data_dir = _get_data_dir(ctx)
+    config_path = _get_config_path(ctx)
     config = build_config(
         config_path=Path(config_path) if config_path else None,
         data_dir=Path(data_dir) if data_dir else None,
@@ -365,15 +562,14 @@ def generate_goals_cmd(
 
 @cli.command("record")
 @click.option("--url", default=None, help="Starting URL")
-@click.option("--data-dir", type=click.Path(), default=None,
-              help="Sparky Runner home directory (tasks, goal summaries, runs). Default: ~/sparky_runner")
-@click.option("--config", "config_path", type=click.Path(), default=None)
+@click.pass_context
 def record_cmd(
+    ctx: click.Context,
     url: str | None,
-    data_dir: str | None,
-    config_path: str | None,
 ) -> None:
     """Record a user demonstration and generate a goal."""
+    data_dir = _get_data_dir(ctx)
+    config_path = _get_config_path(ctx)
     config = build_config(
         config_path=Path(config_path) if config_path else None,
         data_dir=Path(data_dir) if data_dir else None,
