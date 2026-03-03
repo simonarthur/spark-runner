@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import shutil
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
@@ -10,6 +12,8 @@ from browser_use.agent.views import AgentHistoryList
 
 from sparky_runner.classification import _observation_text
 from sparky_runner.log import log_event, log_problem
+from sparky_runner.models import ScreenshotRecord
+from sparky_runner.storage import phase_name_to_slug
 from sparky_runner.summarization import extract_phase_history
 
 
@@ -18,7 +22,7 @@ _PHASE_RULES: str = (
     "- Report any deviations from expected behavior.\n"
     "- Report any possible bugs.\n"
     "- Do not use workarounds unless absolutely necessary. Note all workarounds as problems.\n"
-    "- Complete all steps of a process unless otherwise directed."
+    "- Complete all steps of YOUR ASSIGNED PHASE. Do NOT continue into subsequent phases."
 )
 
 
@@ -82,6 +86,66 @@ def build_augmented_task(
     return restore_fn(task_text)
 
 
+def _collect_screenshots(
+    result: AgentHistoryList[Any],
+    phase_name: str,
+    run_dir: Path,
+) -> list[ScreenshotRecord]:
+    """Copy browser-use step screenshots into the run directory.
+
+    browser-use saves screenshots to a temp directory as ``step_N.png``.
+    This function copies them into ``run_dir/screenshots/`` with phase-prefixed
+    names so they persist after the temp dir is cleaned up.
+
+    Returns:
+        A list of ``ScreenshotRecord`` for each copied screenshot.
+    """
+    screenshots_dir: Path = run_dir / "screenshots"
+    screenshots_dir.mkdir(exist_ok=True)
+
+    records: list[ScreenshotRecord] = []
+    slug: str = phase_name_to_slug(phase_name)
+    now_str: str = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    try:
+        source_paths: list[str | None] = result.screenshot_paths()
+    except Exception:
+        return records
+
+    for step_idx, src in enumerate(source_paths):
+        if src is None:
+            continue
+        src_path = Path(src)
+        if not src_path.exists():
+            continue
+
+        dest_name: str = f"{slug}_step_{step_idx:03d}.png"
+        dest_path: Path = screenshots_dir / dest_name
+        try:
+            shutil.copy2(str(src_path), str(dest_path))
+        except OSError:
+            continue
+
+        # Check if this step had an error
+        error_msg: str | None = None
+        if step_idx < len(result.history):
+            for r in result.history[step_idx].result:
+                if r.error:
+                    error_msg = r.error
+                    break
+
+        records.append(ScreenshotRecord(
+            path=dest_path,
+            event_type="error" if error_msg else "step",
+            phase_name=phase_name,
+            step_number=step_idx,
+            error_message=error_msg,
+            timestamp=now_str,
+        ))
+
+    return records
+
+
 async def run_phase(
     name: str,
     task: str,
@@ -91,7 +155,7 @@ async def run_phase(
     event_log: Path,
     problem_log: Path,
     run_dir: Path,
-) -> tuple[bool, AgentHistoryList[Any]]:
+) -> tuple[bool, AgentHistoryList[Any], list[ScreenshotRecord]]:
     """Run a single phase of the workflow using a browser automation agent.
 
     Args:
@@ -105,7 +169,7 @@ async def run_phase(
         run_dir: Directory for this run's artifacts.
 
     Returns:
-        A tuple of ``(success, result)``.
+        A tuple of ``(success, result, screenshots)``.
     """
     log_event(event_log, f"PHASE START: {name}")
 
@@ -129,16 +193,31 @@ async def run_phase(
     final: str = result.final_result() or ""
     final_lines: str = "\n".join([f"  FINAL RESULT: {line}" for line in final.split("\n")])
 
+    # Collect step screenshots from browser-use temp dir into run_dir/screenshots/
+    phase_screenshots: list[ScreenshotRecord] = _collect_screenshots(result, name, run_dir)
+    if phase_screenshots:
+        log_event(event_log, f"Saved {len(phase_screenshots)} step screenshot(s) for phase '{name}'")
+
     if success:
         log_event(event_log, f"PHASE SUCCESS: {name}\n{final_lines}")
     else:
         log_event(event_log, f"PHASE FAILED: {name}\n{final_lines}")
         log_problem(problem_log, f"PHASE FAILED: {name}\n{final_lines}")
+        # Take an explicit failure screenshot of the current state
         try:
-            screenshot_path: str = str(run_dir / f"failure_{name.replace(' ', '_')}.png")
+            failure_name: str = f"failure_{name.replace(' ', '_')}.png"
+            screenshot_path: str = str(run_dir / "screenshots" / failure_name)
+            (run_dir / "screenshots").mkdir(exist_ok=True)
             page = await browser.get_current_page()
             await page.screenshot(screenshot_path)
             log_event(event_log, f"Failure screenshot saved to {screenshot_path}")
+            phase_screenshots.append(ScreenshotRecord(
+                path=Path(screenshot_path),
+                event_type="phase_end",
+                phase_name=name,
+                error_message=final or "Phase failed",
+                timestamp=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            ))
         except Exception as e:
             log_event(event_log, f"Could not save failure screenshot: {e}")
             log_problem(problem_log, f"Could not save failure screenshot for {name}: {e}")
@@ -153,4 +232,4 @@ async def run_phase(
     history_truncated = "\n".join([f"  PHASE {name} HISTORY: {line}" for line in history_truncated.split("\n")])
     log_event(event_log, f"PHASE HISTORY ({name}):\n{history_truncated}")
 
-    return success, result
+    return success, result, phase_screenshots

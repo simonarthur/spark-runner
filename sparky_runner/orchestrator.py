@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +15,7 @@ from browser_use.agent.views import AgentHistoryList
 from sparky_runner.classification import classify_observations
 from sparky_runner.decomposition import decompose_task, generate_task_name
 from sparky_runner.execution import build_augmented_task, run_phase
+from sparky_runner.observation_routing import route_observations_to_phases
 from sparky_runner.goals import load_goal_summary
 from sparky_runner.knowledge import find_relevant_knowledge, load_knowledge_index
 from sparky_runner.log import log_event, log_problem
@@ -28,6 +30,7 @@ from sparky_runner.models import (
 )
 from sparky_runner.observations import _extract_and_log_observations, merge_observations
 from sparky_runner.placeholders import restore_from_storage, sanitize_for_storage
+from sparky_runner.report import generate_report
 from sparky_runner.results import write_run_metadata
 from sparky_runner.storage import make_run_dir, phase_name_to_slug, safe_write_path
 from sparky_runner.summarization import (
@@ -188,6 +191,19 @@ async def run_single(
         print(f"  {i}. {p['name']}")
     print()
 
+    # Route cross-goal observations to relevant phases
+    routed_observations: dict[str, list[str | dict[str, str]]] = {}
+    if knowledge_match and knowledge_match.get("relevant_observations"):
+        print("Routing observations to phases...")
+        routed_observations = route_observations_to_phases(
+            knowledge_match["relevant_observations"],
+            phases,
+            client,
+            config.get_model("observation_routing"),
+        )
+        for phase_name, obs_list in routed_observations.items():
+            print(f"  {phase_name}: {len(obs_list)} observation(s)")
+
     # Create run directory
     run_dir: Path = make_run_dir(config.runs_dir, task_name)
 
@@ -213,6 +229,11 @@ async def run_single(
         for line in format_knowledge_match(knowledge_match):
             log_event(event_log, line)
 
+    if routed_observations:
+        log_event(event_log, f"OBSERVATION ROUTING ({len(routed_observations)} phase(s) received observations):")
+        for phase_name, obs_list in routed_observations.items():
+            log_event(event_log, f"  {phase_name}: {len(obs_list)} observation(s)")
+
     own_browser: bool = browser is None
     if browser is None:
         browser = Browser(headless=config.headless, keep_alive=True)
@@ -226,8 +247,8 @@ async def run_single(
         prior_summaries: list[dict[str, str]] = []
 
         for phase in phases:
-            cross_obs: list[str] | None = (
-                knowledge_match["relevant_observations"] if knowledge_match else None
+            cross_obs: list[str | dict[str, str]] | None = (
+                routed_observations.get(phase["name"]) or None
             )
             augmented_task: str = build_augmented_task(
                 phase["task"], prior_summaries, restore_fn,
@@ -240,25 +261,29 @@ async def run_single(
 
             success: bool
             result: AgentHistoryList[Any]
-            success, result = await run_phase(
+            phase_screenshots: list[ScreenshotRecord]
+            success, result, phase_screenshots = await run_phase(
                 phase["name"], augmented_task, llm, browser,
                 conversation_log, event_log, problem_log, run_dir,
             )
+            all_screenshots.extend(phase_screenshots)
 
             log_event(event_log, f"Summarizing phase '{phase['name']}'...")
             summary: str = summarize_phase(
                 phase["name"], phase["task"], result, success,
                 client, config.get_model("summarization"),
             )
-            _extract_and_log_observations(summary, phase["name"], problem_log)
+            _extract_and_log_observations(summary, phase["name"], event_log, problem_log, success=success)
 
             phase_slug: str = phase_name_to_slug(phase["name"])
             subtask_path: Path = config.tasks_dir / f"{phase_slug}.txt"
+            now_str: str = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            dated_summary: str = f"<!-- updated: {now_str} -->\n{sanitize_fn(summary)}"
             if goal_path and config.update_tasks:
-                subtask_path.write_text(sanitize_fn(summary))
+                subtask_path.write_text(dated_summary)
             elif config.update_tasks:
                 subtask_path = safe_write_path(subtask_path)
-                subtask_path.write_text(sanitize_fn(summary))
+                subtask_path.write_text(dated_summary)
             log_event(event_log, f"Subtask summary saved to {subtask_path}")
 
             phase_record: dict[str, str] = {
@@ -274,6 +299,7 @@ async def run_single(
                 outcome="SUCCESS" if success else "FAILED",
                 summary=summary,
                 filename=subtask_path.name,
+                screenshots=phase_screenshots,
             ))
 
             summary_truncated: str = summary[:500] + "..." if len(summary) > 500 else summary
@@ -329,6 +355,7 @@ async def run_single(
                 )
                 existing_data["key_observations"] = classified_obs
                 existing_data["subtasks"] = report["subtasks"]
+                existing_data["updated_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
                 goal_path.write_text(sanitize_fn(json.dumps(existing_data, indent=2)))
                 num_errors: int = sum(1 for o in classified_obs if o["severity"] == "error")
                 num_warnings: int = len(classified_obs) - num_errors
@@ -346,6 +373,9 @@ async def run_single(
                     config.get_model("classification"),
                 )
                 report["key_observations"] = classified_obs
+                now_iso: str = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+                report["created_at"] = now_iso
+                report["updated_at"] = now_iso
                 report_path = safe_write_path(report_path)
                 report_path.write_text(sanitize_fn(json.dumps(report, indent=2)))
                 num_errors = sum(1 for o in classified_obs if o["severity"] == "error")
@@ -361,11 +391,30 @@ async def run_single(
             base_url=config.base_url,
             credential_profile=config.active_credential_profile,
             phases=[
-                {"name": s["name"], "outcome": s["outcome"], "screenshots": []}
-                for s in all_summaries
+                {
+                    "name": pr.name,
+                    "outcome": pr.outcome,
+                    "screenshots": [
+                        {
+                            "path": str(s.path.relative_to(run_dir)),
+                            "event_type": s.event_type,
+                            "step_number": s.step_number,
+                            "timestamp": s.timestamp,
+                        }
+                        for s in pr.screenshots
+                    ],
+                }
+                for pr in phase_results
             ],
             screenshots=all_screenshots,
         )
+
+        try:
+            report_index = generate_report(run_dir)
+            print(f"\nHTML report: {report_index}")
+            log_event(event_log, f"HTML report generated: {report_index}")
+        except Exception as report_err:
+            log_event(event_log, f"WARNING: Could not generate HTML report: {report_err}")
 
         if own_browser:
             if not config.auto_close:

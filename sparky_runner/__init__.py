@@ -92,6 +92,7 @@ from sparky_runner import knowledge as _kn  # noqa: E402
 from sparky_runner import decomposition as _dc  # noqa: E402
 from sparky_runner import summarization as _sm  # noqa: E402
 from sparky_runner import classification as _cl  # noqa: E402
+from sparky_runner import observation_routing as _or  # noqa: E402
 from sparky_runner import observations as _ob  # noqa: E402
 from sparky_runner import goals as _gl  # noqa: E402
 from sparky_runner import execution as _ex  # noqa: E402
@@ -197,6 +198,14 @@ def classify_observations(
     return _cl.classify_observations(prompt, observations, summary_client, rules=effective_rules)
 
 
+def route_observations_to_phases(
+    observations: list[str | dict[str, str]],
+    phases: list[dict[str, str]],
+) -> dict[str, list[str | dict[str, str]]]:
+    """Route each observation to only the phase(s) where it is relevant."""
+    return _or.route_observations_to_phases(observations, phases, summary_client)
+
+
 def merge_observations(
     existing: list[str | dict[str, str]],
     new: list[str | dict[str, str]],
@@ -206,10 +215,13 @@ def merge_observations(
 
 
 def _extract_and_log_observations(
-    summary: str, phase_name: str, problem_log: Path
+    summary: str, phase_name: str, event_log: Path, problem_log: Path,
+    *, success: bool = True,
 ) -> None:
-    """Extract observations and sub-phase failures from a phase summary and log them."""
-    return _ob._extract_and_log_observations(summary, phase_name, problem_log)
+    """Extract observations from a phase summary and route them to the appropriate log."""
+    return _ob._extract_and_log_observations(
+        summary, phase_name, event_log, problem_log, success=success,
+    )
 
 
 def build_augmented_task(
@@ -233,7 +245,7 @@ async def run_phase(
     event_log: Path,
     problem_log: Path,
     run_dir: Path,
-) -> tuple[bool, Any]:
+) -> tuple[bool, Any, list[Any]]:
     """Run a single phase of the workflow using a browser automation agent."""
     return await _ex.run_phase(
         name, task, llm, browser,

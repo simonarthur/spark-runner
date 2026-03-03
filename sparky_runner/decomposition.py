@@ -163,7 +163,7 @@ User's task:
                     - Report any deviations from expected behavior.
                     - Report any possible bugs.
                     - Report any unexpected failures.
-                    - Complete all steps of a process unles otherwise directed.
+                    - Complete all steps of YOUR ASSIGNED PHASE. Do NOT continue into subsequent phases.
     """
     for phase in phases:
         if "reuse" in phase:
