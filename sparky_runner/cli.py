@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 import click
+from click.shell_completion import CompletionItem
 
 from sparky_runner.config import build_config
 from sparky_runner.models import SparkyConfig, TaskSpec
@@ -99,6 +100,18 @@ def _resolve_run_path(name: str | None, runs_dir: Path | None) -> Path:
     )
 
 
+def _file_mtime_label(path: Path) -> str:
+    """Return a human-readable modification time for a path."""
+    from datetime import datetime
+
+    try:
+        mtime = path.stat().st_mtime
+        dt = datetime.fromtimestamp(mtime)
+        return dt.strftime("%Y-%m-%d %H:%M")
+    except OSError:
+        return ""
+
+
 def _build_config_for_completion(ctx: click.Context) -> SparkyConfig:
     """Build a config from whatever context is available during tab completion."""
     data_dir = _get_data_dir(ctx)
@@ -111,7 +124,7 @@ def _build_config_for_completion(ctx: click.Context) -> SparkyConfig:
 
 def _complete_run_path(
     ctx: click.Context, param: click.Parameter, incomplete: str,
-) -> list[click.shell_completion.CompletionItem]:
+) -> list[CompletionItem]:
     """Tab-complete run paths (task/timestamp) from runs_dir."""
     try:
         config = _build_config_for_completion(ctx)
@@ -122,24 +135,23 @@ def _complete_run_path(
     if runs_dir is None or not runs_dir.exists():
         return []
 
-    candidates: list[str] = []
+    items: list[CompletionItem] = []
     for task_dir in sorted(runs_dir.iterdir()):
         if not task_dir.is_dir():
             continue
         for run_dir in sorted(task_dir.iterdir(), reverse=True):
             if run_dir.is_dir():
-                candidates.append(f"{task_dir.name}/{run_dir.name}")
-
-    return [
-        click.shell_completion.CompletionItem(c)
-        for c in candidates
-        if c.startswith(incomplete)
-    ]
+                name = f"{task_dir.name}/{run_dir.name}"
+                if name.startswith(incomplete):
+                    items.append(CompletionItem(
+                        name, help=_file_mtime_label(run_dir),
+                    ))
+    return items
 
 
 def _complete_goal_file(
     ctx: click.Context, param: click.Parameter, incomplete: str,
-) -> list[click.shell_completion.CompletionItem]:
+) -> list[CompletionItem]:
     """Tab-complete goal names from goal_summaries_dir."""
     try:
         config = _build_config_for_completion(ctx)
@@ -150,23 +162,25 @@ def _complete_goal_file(
     if gs_dir is None or not gs_dir.exists():
         return []
 
-    candidates: list[str] = []
+    items: list[CompletionItem] = []
     for f in sorted(gs_dir.iterdir()):
         if f.is_file() and f.suffix == ".json":
+            mtime = _file_mtime_label(f)
             # Offer both with and without .json
-            candidates.append(f.stem)
-            candidates.append(f.name)
-
-    return [
-        click.shell_completion.CompletionItem(c)
-        for c in candidates
-        if c.startswith(incomplete)
-    ]
+            if f.stem.startswith(incomplete):
+                items.append(CompletionItem(
+                    f.stem, help=mtime,
+                ))
+            if f.name.startswith(incomplete):
+                items.append(CompletionItem(
+                    f.name, help=mtime,
+                ))
+    return items
 
 
 def _complete_goal_name(
     ctx: click.Context, param: click.Parameter, incomplete: str,
-) -> list[click.shell_completion.CompletionItem]:
+) -> list[CompletionItem]:
     """Tab-complete goal names (without .json) from goal_summaries_dir."""
     try:
         config = _build_config_for_completion(ctx)
@@ -178,7 +192,7 @@ def _complete_goal_name(
         return []
 
     return [
-        click.shell_completion.CompletionItem(f.stem)
+        CompletionItem(f.stem, help=_file_mtime_label(f))
         for f in sorted(gs_dir.iterdir())
         if f.is_file() and f.suffix == ".json" and f.stem.startswith(incomplete)
     ]
@@ -527,6 +541,24 @@ def results_screenshots(ctx: click.Context, run_path: str | None) -> None:
         if ss.phase_name:
             parts.append(f"phase: {ss.phase_name}")
         print(" ".join(parts))
+
+
+@results.command("report")
+@click.argument("run_path", required=False, default=None, shell_complete=_complete_run_path)
+@click.pass_context
+def results_report(ctx: click.Context, run_path: str | None) -> None:
+    """Generate or regenerate HTML report for a run."""
+    data_dir = _get_data_dir(ctx)
+    config_path = _get_config_path(ctx)
+    config = build_config(
+        config_path=Path(config_path) if config_path else None,
+        data_dir=Path(data_dir) if data_dir else None,
+    )
+    resolved = _resolve_run_path(run_path, config.runs_dir)
+    from sparky_runner.report import generate_report
+
+    index_path = generate_report(resolved)
+    print(f"HTML report generated: {index_path}")
 
 
 # ── Generate goals ────────────────────────────────────────────────────

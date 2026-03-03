@@ -9,175 +9,103 @@ import sparky_runner
 
 
 class TestExtractAndLogObservations:
-    def test_success_sub_phases_not_logged(self, tmp_path: Path) -> None:
-        summary = (
-            "### Sub-phase 1: Login\n"
-            "**Status**: SUCCESS\n"
-        )
-        log = tmp_path / "problem.log"
-        sparky_runner._extract_and_log_observations(summary, "Login", log)
-        assert not log.exists()
-
-    def test_failed_sub_phase_logged_as_error(self, tmp_path: Path) -> None:
-        summary = (
-            "### Sub-phase 2: Search\n"
-            "**Status**: FAILED\n"
-        )
-        log = tmp_path / "problem.log"
-        sparky_runner._extract_and_log_observations(summary, "Search Phase", log)
-        content = log.read_text()
-        assert "ERROR" in content
-        assert "Search" in content
-        assert "[diagnostic:" in content
-
-    def test_partial_failure_logged(self, tmp_path: Path) -> None:
-        summary = (
-            "### Sub-phase A: Form Fill\n"
-            "**Status**: PARTIAL FAILURE\n"
-        )
-        log = tmp_path / "problem.log"
-        sparky_runner._extract_and_log_observations(summary, "Form", log)
-        assert "ERROR" in log.read_text()
-
-    def test_result_line_variant(self, tmp_path: Path) -> None:
-        summary = (
-            "### 3.1 Navigate to Landing Page\n"
-            "**Result**: Failed - page not found\n"
-        )
-        log = tmp_path / "problem.log"
-        sparky_runner._extract_and_log_observations(summary, "Nav", log)
-        assert "ERROR" in log.read_text()
-
-    def test_partial_success_treated_as_success(self, tmp_path: Path) -> None:
-        """'Partial Success' contains 'SUCCESS' so it is NOT logged as an error."""
-        summary = (
-            "### 3.1 Navigate to Landing Page\n"
-            "**Result**: Partial Success\n"
-        )
-        log = tmp_path / "problem.log"
-        sparky_runner._extract_and_log_observations(summary, "Nav", log)
-        assert not log.exists()
-
-    def test_succeeded_treated_as_success(self, tmp_path: Path) -> None:
-        """'Succeeded' (as opposed to 'SUCCESS') should not be logged as error."""
-        summary = (
-            "### Sub-phase 1: Pre-completion Verification\n"
-            "**Status**: ✅ Succeeded - All categories confirmed as tested\n"
-        )
-        log = tmp_path / "problem.log"
-        sparky_runner._extract_and_log_observations(summary, "Verify", log)
-        assert not log.exists()
-
-    def test_checkmark_emoji_treated_as_success(self, tmp_path: Path) -> None:
-        """A ✅ emoji in the status indicates success."""
-        summary = (
-            "### Sub-phase 1: Wrap Up\n"
-            "**Status**: ✅ Done\n"
-        )
-        log = tmp_path / "problem.log"
-        sparky_runner._extract_and_log_observations(summary, "Phase", log)
-        assert not log.exists()
-
-    def test_passed_treated_as_success(self, tmp_path: Path) -> None:
-        """'PASSED' in the status indicates success."""
-        summary = (
-            "### Sub-phase 1: Validation\n"
-            "**Status**: PASSED\n"
-        )
-        log = tmp_path / "problem.log"
-        sparky_runner._extract_and_log_observations(summary, "Phase", log)
-        assert not log.exists()
-
-    def test_in_progress_treated_as_non_error(self, tmp_path: Path) -> None:
-        """'IN PROGRESS' is a transient state, not a failure."""
-        summary = (
-            "### Sub-phase 1: Poll for Completion\n"
-            "**Status**: IN PROGRESS - Loading graphic remained visible\n"
-        )
-        log = tmp_path / "problem.log"
-        sparky_runner._extract_and_log_observations(summary, "Generate", log)
-        assert not log.exists()
-
-    def test_observations_standalone_when_no_errors(self, tmp_path: Path) -> None:
-        """Without sub-phase failures, observations are logged standalone."""
+    def test_observations_standalone_go_to_event_log(self, tmp_path: Path) -> None:
+        """Without sub-phase failures, observations go to the event log (not problem log)."""
         summary = "<OBSERVATIONS>The search bar was missing</OBSERVATIONS>"
-        log = tmp_path / "problem.log"
-        sparky_runner._extract_and_log_observations(summary, "Test", log)
-        content = log.read_text()
-        assert "OBSERVATIONS" in content
-        assert "search bar was missing" in content
+        event_log = tmp_path / "event.log"
+        problem_log = tmp_path / "problem.log"
+        sparky_runner._extract_and_log_observations(summary, "Test", event_log, problem_log)
+        # Observations are informational — they go to event log
+        event_content = event_log.read_text()
+        assert "OBSERVATIONS" in event_content
+        assert "search bar was missing" in event_content
+        # Problem log should NOT have observations
+        assert not problem_log.exists()
 
     def test_case_insensitive_tags(self, tmp_path: Path) -> None:
         summary = "<observations>Something odd</observations>"
-        log = tmp_path / "problem.log"
-        sparky_runner._extract_and_log_observations(summary, "Phase", log)
-        assert "Something odd" in log.read_text()
+        event_log = tmp_path / "event.log"
+        problem_log = tmp_path / "problem.log"
+        sparky_runner._extract_and_log_observations(summary, "Phase", event_log, problem_log)
+        assert "Something odd" in event_log.read_text()
+        assert not problem_log.exists()
 
     def test_trivial_observations_skipped(self, tmp_path: Path) -> None:
         for trivial in ("None", "N/A", "none.", "n/a."):
-            log = tmp_path / f"p_{trivial}.log"
+            event_log = tmp_path / f"e_{trivial}.log"
+            problem_log = tmp_path / f"p_{trivial}.log"
             summary = f"<OBSERVATIONS>{trivial}</OBSERVATIONS>"
-            sparky_runner._extract_and_log_observations(summary, "P", log)
-            assert not log.exists(), f"Trivial observation '{trivial}' should be skipped"
+            sparky_runner._extract_and_log_observations(summary, "P", event_log, problem_log)
+            assert not problem_log.exists(), f"Trivial observation '{trivial}' should not be in problem log"
+            assert not event_log.exists(), f"Trivial observation '{trivial}' should not be in event log"
 
-    def test_status_with_intervening_lines(self, tmp_path: Path) -> None:
-        """Status line several lines below the heading should still be detected."""
-        summary = (
-            "### Sub-phase 2: Search Bar Interaction\n"
-            "Typed 'Email Body' into the search field.\n"
-            "Waited for results to appear.\n"
-            "**Status**: FAILED\n"
-        )
-        log = tmp_path / "problem.log"
-        sparky_runner._extract_and_log_observations(summary, "Search", log)
-        content = log.read_text()
-        assert "ERROR" in content
-        assert "Search Bar Interaction" in content
-
-    def test_error_includes_observations_detail(self, tmp_path: Path) -> None:
-        """When a sub-phase fails, observations are folded into the ERROR entry."""
-        summary = (
-            "### Sub-phase 1: Click Button\n"
-            "**Status**: FAILED\n"
-            "\n"
-            "<OBSERVATIONS>Button was disabled and unresponsive</OBSERVATIONS>"
-        )
-        log = tmp_path / "problem.log"
-        sparky_runner._extract_and_log_observations(summary, "Click", log)
-        content = log.read_text()
-        assert "ERROR" in content
-        assert "Button was disabled and unresponsive" in content
-
-    def test_observations_not_duplicated_when_error_present(self, tmp_path: Path) -> None:
-        """When observations are folded into ERROR, no standalone OBSERVATIONS line."""
-        summary = (
-            "### Sub-phase 1: Search\n"
-            "**Status**: FAILED\n"
-            "\n"
-            "<OBSERVATIONS>Search broken</OBSERVATIONS>"
-        )
-        log = tmp_path / "problem.log"
-        sparky_runner._extract_and_log_observations(summary, "Phase", log)
-        content = log.read_text()
-        # Should have exactly one timestamped entry (the ERROR), not a second OBSERVATIONS
-        lines = [l for l in content.splitlines() if l.startswith("[")]
-        assert len(lines) == 1
-        assert "ERROR" in lines[0]
-
-    def test_observations_logged_standalone_when_success(self, tmp_path: Path) -> None:
-        """Sub-phase SUCCESS + observations still logs observations standalone."""
+    def test_observations_logged_to_event_log_when_success(self, tmp_path: Path) -> None:
+        """Explicit success=True routes observations to event log."""
         summary = (
             "### Sub-phase 1: Login\n"
             "**Status**: SUCCESS\n"
             "\n"
             "<OBSERVATIONS>Element indices shifted</OBSERVATIONS>"
         )
-        log = tmp_path / "problem.log"
-        sparky_runner._extract_and_log_observations(summary, "Login", log)
-        content = log.read_text()
+        event_log = tmp_path / "event.log"
+        problem_log = tmp_path / "problem.log"
+        sparky_runner._extract_and_log_observations(
+            summary, "Login", event_log, problem_log, success=True,
+        )
+        event_content = event_log.read_text()
+        assert "OBSERVATIONS" in event_content
+        assert "Element indices shifted" in event_content
+        assert not problem_log.exists()
+
+    def test_failure_routes_observations_to_problem_log(self, tmp_path: Path) -> None:
+        """success=False routes observations to problem_log."""
+        summary = "<OBSERVATIONS>Button was disabled and unresponsive</OBSERVATIONS>"
+        event_log = tmp_path / "event.log"
+        problem_log = tmp_path / "problem.log"
+        sparky_runner._extract_and_log_observations(
+            summary, "Click", event_log, problem_log, success=False,
+        )
+        content = problem_log.read_text()
         assert "OBSERVATIONS" in content
-        assert "Element indices shifted" in content
-        assert "ERROR" not in content
+        assert "Button was disabled and unresponsive" in content
+        # Event log should NOT have observations when phase failed
+        assert not event_log.exists()
+
+    def test_failure_observations_only_in_problem_log(self, tmp_path: Path) -> None:
+        """success=False sends observations only to problem_log, not event_log."""
+        summary = "<OBSERVATIONS>Search broken</OBSERVATIONS>"
+        event_log = tmp_path / "event.log"
+        problem_log = tmp_path / "problem.log"
+        sparky_runner._extract_and_log_observations(
+            summary, "Phase", event_log, problem_log, success=False,
+        )
+        # Problem log has exactly one timestamped entry
+        content = problem_log.read_text()
+        lines = [line for line in content.splitlines() if line.startswith("[")]
+        assert len(lines) == 1
+        assert "OBSERVATIONS" in lines[0]
+        # Event log should not exist
+        assert not event_log.exists()
+
+    def test_no_observations_no_logging(self, tmp_path: Path) -> None:
+        """No <OBSERVATIONS> block means neither log is written."""
+        summary = "### Sub-phase 1: Login\n**Status**: SUCCESS\n"
+        event_log = tmp_path / "event.log"
+        problem_log = tmp_path / "problem.log"
+        sparky_runner._extract_and_log_observations(summary, "Login", event_log, problem_log)
+        assert not event_log.exists()
+        assert not problem_log.exists()
+
+    def test_failure_without_observations(self, tmp_path: Path) -> None:
+        """success=False but no observations — problem_log not written by this function."""
+        summary = "### Sub-phase 1: Login\n**Status**: FAILED\n"
+        event_log = tmp_path / "event.log"
+        problem_log = tmp_path / "problem.log"
+        sparky_runner._extract_and_log_observations(
+            summary, "Login", event_log, problem_log, success=False,
+        )
+        assert not problem_log.exists()
+        assert not event_log.exists()
 
 
 # ── extract_phase_history ───────────────────────────────────────────────

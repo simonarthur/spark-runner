@@ -80,7 +80,7 @@ def list_runs(
             problem_log = run_dir / "problem_log.txt"
 
             num_phases = 0
-            has_errors = problem_log.exists() and problem_log.stat().st_size > 0
+            has_errors = False
             prompt = ""
 
             if metadata_path.exists():
@@ -88,11 +88,15 @@ def list_runs(
                     meta: dict[str, Any] = json.loads(metadata_path.read_text())
                     num_phases = len(meta.get("phases", []))
                     prompt = meta.get("prompt", "")
-                    has_errors = has_errors or any(
+                    has_errors = any(
                         p.get("outcome") != "SUCCESS" for p in meta.get("phases", [])
                     )
                 except (json.JSONDecodeError, OSError):
                     pass
+
+            # Fall back to problem log only when no metadata is available
+            if not metadata_path.exists():
+                has_errors = problem_log.exists() and problem_log.stat().st_size > 0
 
             summaries.append(RunSummary(
                 task_name=task_dir.name,
@@ -194,16 +198,17 @@ def format_run_detail(detail: RunDetail) -> str:
         for ss in detail.screenshots:
             lines.append(f"    {ss.path.name} ({ss.event_type})")
 
-    # Also show problem log if it exists
+    # Show problem log (actual errors) if it exists
     problem_log = detail.run_dir / "problem_log.txt"
     if problem_log.exists():
         content = problem_log.read_text().strip()
         if content:
-            lines.append("\n  Problems:")
+            lines.append("\n  Errors:")
             for line in content.splitlines()[:20]:
                 lines.append(f"    {line}")
-            if content.count("\n") > 20:
-                lines.append(f"    ... ({content.count(chr(10)) - 20} more lines)")
+            total_lines = content.count("\n") + 1
+            if total_lines > 20:
+                lines.append(f"    ... ({total_lines - 20} more lines)")
 
     return "\n".join(lines)
 

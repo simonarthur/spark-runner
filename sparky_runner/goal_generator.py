@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -204,6 +205,11 @@ Return ONLY valid JSON with this structure:
         except json.JSONDecodeError:
             print(f"  Warning: could not generate goal for '{feature.name}'")
             continue
+
+        # Add timestamps
+        now_iso: str = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        goal_data["created_at"] = now_iso
+        goal_data["updated_at"] = now_iso
 
         # Create filename from feature name
         slug = re.sub(r"[^a-z0-9]+", "-", feature.name.lower()).strip("-")

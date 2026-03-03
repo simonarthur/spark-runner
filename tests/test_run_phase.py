@@ -39,6 +39,8 @@ def _make_agent_result(
     result.final_result.return_value = "All good"
     result.errors.return_value = []
     result.history = history or []
+    # screenshot_paths returns None for each step (no temp files in tests)
+    result.screenshot_paths.return_value = [None] * len(result.history)
     return result
 
 
@@ -56,7 +58,7 @@ class TestRunPhase:
             mock_agent_instance = MockAgent.return_value
             mock_agent_instance.run = AsyncMock(return_value=agent_result)
 
-            success, result = await sparky_runner.run_phase(
+            success, result, screenshots = await sparky_runner.run_phase(
                 "Login", "Do login", MagicMock(), MagicMock(),
                 conversation_log, event_log, problem_log, tmp_path,
             )
@@ -82,7 +84,7 @@ class TestRunPhase:
             mock_agent_instance = MockAgent.return_value
             mock_agent_instance.run = AsyncMock(return_value=agent_result)
 
-            success, result = await sparky_runner.run_phase(
+            success, result, screenshots = await sparky_runner.run_phase(
                 "Search", "Search stuff", MagicMock(), mock_browser,
                 conversation_log, event_log, problem_log, tmp_path,
             )
@@ -134,7 +136,7 @@ class TestRunPhase:
                 conversation_log, event_log, problem_log, tmp_path,
             )
 
-        expected_path = str(tmp_path / "failure_Login_Step.png")
+        expected_path = str(tmp_path / "screenshots" / "failure_Login_Step.png")
         mock_page.screenshot.assert_called_once_with(expected_path)
 
     @pytest.mark.asyncio
@@ -154,7 +156,7 @@ class TestRunPhase:
             mock_agent_instance = MockAgent.return_value
             mock_agent_instance.run = AsyncMock(return_value=agent_result)
 
-            success, result = await sparky_runner.run_phase(
+            success, result, screenshots = await sparky_runner.run_phase(
                 "Crash", "Do stuff", MagicMock(), mock_browser,
                 conversation_log, event_log, problem_log, tmp_path,
             )
@@ -181,7 +183,7 @@ class TestRunPhase:
             mock_agent_instance = MockAgent.return_value
             mock_agent_instance.run = AsyncMock(return_value=agent_result)
 
-            success, result = await sparky_runner.run_phase(
+            success, result, screenshots = await sparky_runner.run_phase(
                 "Stuck", "Do stuff", MagicMock(), mock_browser,
                 conversation_log, event_log, problem_log, tmp_path,
             )
@@ -214,3 +216,75 @@ class TestRunPhase:
 
         assert "exhausted step limit" in event_log.read_text()
         assert "STEP LIMIT" in problem_log.read_text()
+
+    @pytest.mark.asyncio
+    async def test_step_screenshots_collected(self, tmp_path: Path) -> None:
+        """Step screenshots from browser-use temp dir are copied into run_dir/screenshots/."""
+        event_log = tmp_path / "event.log"
+        problem_log = tmp_path / "problem.log"
+        conversation_log = tmp_path / "conv.json"
+
+        # Create fake temp screenshot files that browser-use would produce
+        tmp_screenshots = tmp_path / "browser_use_tmp"
+        tmp_screenshots.mkdir()
+        step0 = tmp_screenshots / "step_0.png"
+        step1 = tmp_screenshots / "step_1.png"
+        step0.write_bytes(b"PNG-step0")
+        step1.write_bytes(b"PNG-step1")
+
+        history = [_make_history_item(), _make_history_item()]
+        agent_result = _make_agent_result(done=True, successful=True, history=history)
+        agent_result.screenshot_paths.return_value = [str(step0), str(step1)]
+
+        with patch(_AGENT_PATCH) as MockAgent, \
+             patch(_HISTORY_PATCH, return_value="log"):
+            mock_agent_instance = MockAgent.return_value
+            mock_agent_instance.run = AsyncMock(return_value=agent_result)
+
+            success, result, screenshots = await sparky_runner.run_phase(
+                "Login", "Do login", MagicMock(), MagicMock(),
+                conversation_log, event_log, problem_log, tmp_path,
+            )
+
+        assert success is True
+        assert len(screenshots) == 2
+        # Check files were copied into screenshots/ dir
+        screenshots_dir = tmp_path / "screenshots"
+        assert screenshots_dir.is_dir()
+        copied = sorted(screenshots_dir.iterdir())
+        assert len(copied) == 2
+        assert copied[0].name == "login_step_000.png"
+        assert copied[1].name == "login_step_001.png"
+        assert copied[0].read_bytes() == b"PNG-step0"
+
+    @pytest.mark.asyncio
+    async def test_error_step_screenshots_tagged(self, tmp_path: Path) -> None:
+        """Screenshots at error steps have event_type='error' and error_message set."""
+        event_log = tmp_path / "event.log"
+        problem_log = tmp_path / "problem.log"
+        conversation_log = tmp_path / "conv.json"
+
+        tmp_screenshots = tmp_path / "browser_use_tmp"
+        tmp_screenshots.mkdir()
+        step0 = tmp_screenshots / "step_0.png"
+        step0.write_bytes(b"PNG-error")
+
+        history = [_make_history_item(error="Element not found")]
+        agent_result = _make_agent_result(done=True, successful=True, history=history)
+        agent_result.screenshot_paths.return_value = [str(step0)]
+
+        with patch(_AGENT_PATCH) as MockAgent, \
+             patch(_HISTORY_PATCH, return_value="log"):
+            mock_agent_instance = MockAgent.return_value
+            mock_agent_instance.run = AsyncMock(return_value=agent_result)
+
+            success, result, screenshots = await sparky_runner.run_phase(
+                "Fill", "Fill form", MagicMock(), MagicMock(),
+                conversation_log, event_log, problem_log, tmp_path,
+            )
+
+        assert len(screenshots) == 1
+        assert screenshots[0].event_type == "error"
+        assert screenshots[0].error_message == "Element not found"
+        assert screenshots[0].phase_name == "Fill"
+        assert screenshots[0].step_number == 0

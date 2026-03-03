@@ -10,63 +10,43 @@ from typing import Any
 import anthropic
 
 from sparky_runner.classification import _observation_text
-from sparky_runner.log import log_problem
+from sparky_runner.log import log_event, log_problem
 from sparky_runner.models import ModelConfig
 
 
 def _extract_and_log_observations(
-    summary: str, phase_name: str, problem_log: Path
+    summary: str, phase_name: str, event_log: Path, problem_log: Path,
+    *, success: bool = True,
 ) -> None:
-    """Extract observations and sub-phase failures from a phase summary and log them.
+    """Extract observations from a phase summary and route them to the appropriate log.
 
-    Performs two passes over the LLM-generated phase summary:
-
-    1. **Observations**: Extracts ``<OBSERVATIONS>...</OBSERVATIONS>`` content.
-    2. **Sub-phase failures**: Parses ``### Sub-phase N: ...`` sections and logs
-       any with a non-SUCCESS status as ``ERROR`` entries in the problem log.
+    Extracts ``<OBSERVATIONS>...</OBSERVATIONS>`` content from the summary.
+    Successful phases log observations to the event log; failed phases log
+    them to the problem log.  Real failure detection is handled upstream by
+    ``run_phase()`` in ``execution.py``.
 
     Args:
         summary: The full structured summary text returned by ``summarize_phase()``.
         phase_name: Human-readable phase name for the log entry prefix.
-        problem_log: Path to the problem log file.
+        event_log: Path to the event log file (for observations on success).
+        problem_log: Path to the problem log file (for observations on failure).
+        success: Whether the phase succeeded (from ``run_phase()``).
     """
-    # --- Extract <OBSERVATIONS> block first ---
-    observations: str = ""
     obs_match: re.Match[str] | None = re.search(
         r"<OBSERVATIONS>(.*?)</OBSERVATIONS>",
         summary,
         re.DOTALL | re.IGNORECASE,
     )
-    if obs_match:
-        observations = obs_match.group(1).strip()
-        if observations.lower() in ("none", "n/a", "none.", "n/a."):
-            observations = ""
+    if not obs_match:
+        return
 
-    # --- Detect sub-phase failures ---
-    _SUCCESS_INDICATORS: tuple[str, ...] = ("SUCCESS", "SUCCEED", "PASSED", "✅", "IN PROGRESS")
-    has_errors: bool = False
-    for sp_match in re.finditer(
-        r"###\s*(?:Sub-phase\s+)?[\dA-Za-z.]+[:\s]+([^\n]+)\n"
-        r".*?\*\*(?:Status|Result)\*\*:\s*([^\n]+)",
-        summary,
-        re.DOTALL,
-    ):
-        sp_name: str = sp_match.group(1).strip()
-        sp_status: str = sp_match.group(2).strip()
-        sp_status_upper: str = sp_status.upper()
-        is_success: bool = any(ind in sp_status_upper for ind in _SUCCESS_INDICATORS)
-        if not is_success:
-            error_msg: str = (
-                f"ERROR ({phase_name} / {sp_name}): Sub-phase status: {sp_status}"
-                f'\n  [diagnostic: status "{sp_status}" matched none of {_SUCCESS_INDICATORS}]'
-            )
-            if observations:
-                error_msg += f"\n  Details:\n  {observations}"
-            log_problem(problem_log, error_msg)
-            has_errors = True
+    observations: str = obs_match.group(1).strip()
+    if observations.lower() in ("none", "n/a", "none.", "n/a."):
+        return
 
-    # Log observations standalone only when no sub-phase errors consumed them
-    if observations and not has_errors:
+    if success:
+        log_event(event_log, f"OBSERVATIONS ({phase_name}): {observations}")
+    else:
         log_problem(problem_log, f"OBSERVATIONS ({phase_name}): {observations}")
 
 
