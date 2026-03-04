@@ -126,7 +126,8 @@ IMPORTANT RULES:
 - Every phase must start with ALL of these paragraphs (copy them verbatim):
     "IMPORTANT: Before doing anything else, check whether this phase's goal has ALREADY been achieved by a prior phase (e.g. the expected UI state is already visible). If so, report success immediately without taking any actions."
     "Check for error popup/toast after every action. Report any deviations from expected behavior."
-    "If you cannot find an expected UI element after reasonable exploration (scrolling, searching, checking alternate locations), do NOT keep retrying the same approaches. Report what you found, note the missing element, and mark the phase as done."
+    "If you cannot find an expected UI element after reasonable exploration (scrolling, waiting for load), do NOT keep retrying the same approaches and do NOT switch to a different mechanism. Report what you found, note the missing element, and FAIL the phase."
+    "If a feature does not work as expected (e.g. search returns no results, a button does nothing, a form fails to submit), do NOT work around it using a different feature or navigation path. Report the failure and FAIL the phase."
 - Every phase's FINAL instruction (last numbered step) MUST be a STOP condition in this exact format:
     "STOP: Report success once <expected state>. Do NOT click any buttons, fill any fields, or proceed further — the next phase will handle that."
   Additionally, repeat the stop condition BEFORE the last action step so the agent sees it twice. For example, if the last action is "Click Next", the step before it should say "After clicking Next, STOP as soon as the new page is visible."

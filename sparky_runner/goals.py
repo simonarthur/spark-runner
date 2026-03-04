@@ -142,7 +142,11 @@ def show_goal_detail(
         goal_name: Name of the goal (with or without ``-task.json`` suffix).
         restore_fn: Function to restore placeholders in stored text.
     """
-    if not goal_name.endswith("-task.json"):
+    if goal_name.endswith("-task.json"):
+        pass
+    elif goal_name.endswith("-task"):
+        goal_name = f"{goal_name}.json"
+    else:
         goal_name = f"{goal_name}-task.json"
     goal_path: Path = goal_summaries_dir / goal_name
     if not goal_path.exists():
@@ -187,7 +191,11 @@ def delete_goal(
         goal_name: Name of the goal (with or without ``-task.json`` suffix).
         force: If True, skip confirmation prompt.
     """
-    if not goal_name.endswith("-task.json"):
+    if goal_name.endswith("-task.json"):
+        pass
+    elif goal_name.endswith("-task"):
+        goal_name = f"{goal_name}.json"
+    else:
         goal_name = f"{goal_name}-task.json"
     goal_path: Path = goal_summaries_dir / goal_name
     if not goal_path.exists():

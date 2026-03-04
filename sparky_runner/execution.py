@@ -21,7 +21,7 @@ _PHASE_RULES: str = (
     "- Check for error popup/toast after every action.\n"
     "- Report any deviations from expected behavior.\n"
     "- Report any possible bugs.\n"
-    "- Do not use workarounds unless absolutely necessary. Note all workarounds as problems.\n"
+    "- Do NOT use workarounds. If an action fails or a feature does not work as expected, report it as a FAILURE — do not try a different mechanism to achieve the same goal.\n"
     "- Complete all steps of YOUR ASSIGNED PHASE. Do NOT continue into subsequent phases."
 )
 
@@ -79,9 +79,10 @@ def build_augmented_task(
         context_parts.append("")
 
     if not context_parts:
-        return restore_fn(original_task)
+        return restore_fn(f"{_PHASE_RULES}\n\n{original_task}")
 
     context_parts.append("=== YOUR TASK (use the context above to inform your actions) ===\n")
+    context_parts.append(_PHASE_RULES + "\n")
     task_text: str = "\n".join(context_parts) + original_task
     return restore_fn(task_text)
 
