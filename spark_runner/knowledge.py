@@ -12,6 +12,10 @@ import anthropic
 from spark_runner.classification import _observation_text
 from spark_runner.models import ModelConfig
 
+# Budget for the knowledge index text sent to the LLM (~140k tokens at ~3.5
+# chars/token, leaving room for the prompt template + response within 200k).
+_MAX_KNOWLEDGE_CHARS: int = 500_000
+
 
 def load_knowledge_index(
     goal_summaries_dir: Path,
@@ -116,7 +120,25 @@ def find_relevant_knowledge(
                 parts.append(f"      {st['content']}")
         index_text_parts.append("\n".join(parts))
 
-    index_text: str = "\n\n".join(index_text_parts)
+    # Truncate if the combined index would exceed the character budget.
+    total_goals: int = len(index_text_parts)
+    kept_parts: list[str] = []
+    char_count: int = 0
+    for part in index_text_parts:
+        # Account for the "\n\n" separator between parts.
+        added: int = len(part) + (2 if kept_parts else 0)
+        if char_count + added > _MAX_KNOWLEDGE_CHARS and kept_parts:
+            break
+        kept_parts.append(part)
+        char_count += added
+
+    if len(kept_parts) < total_goals:
+        print(
+            f"  Warning: knowledge index truncated from {total_goals} to"
+            f" {len(kept_parts)} goal(s) to fit token limit"
+        )
+
+    index_text: str = "\n\n".join(kept_parts)
     print(f"  Sending {len(index_text)} chars to LLM for knowledge matching...")
 
     response: anthropic.types.Message = client.messages.create(
