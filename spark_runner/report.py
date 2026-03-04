@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from spark_runner.models import ScreenshotRecord
-from spark_runner.results import PhaseDetail, RunDetail, get_run_detail
+from spark_runner.results import PhaseDetail, RunDetail, RunSummary, get_run_detail, list_runs
 from spark_runner.storage import phase_name_to_slug
 
 
@@ -783,4 +783,135 @@ def generate_report(run_dir: Path) -> Path:
     for filename, content in pages.items():
         (report_dir / filename).write_text(content)
 
+    # Generate the runs-level index (best-effort; don't fail the run report)
+    try:
+        runs_dir = run_dir.parent.parent
+        if runs_dir.is_dir():
+            generate_runs_index(runs_dir)
+    except Exception:
+        pass
+
     return report_dir / "index.html"
+
+
+def _runs_index_css() -> str:
+    """Return inline CSS for the runs index page."""
+    return """\
+:root {
+  --bg: #fafafa;
+  --fg: #1a1a1a;
+  --accent: #2563eb;
+  --border: #d1d5db;
+  --success: #16a34a;
+  --fail: #dc2626;
+  --muted: #6b7280;
+  --pre-bg: #f3f4f6;
+  --card-bg: #fff;
+}
+*, *::before, *::after { box-sizing: border-box; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  color: var(--fg);
+  background: var(--bg);
+  margin: 0;
+  padding: 0;
+  line-height: 1.6;
+}
+.container { max-width: 1200px; margin: 0 auto; padding: 1.5rem 2rem 3rem; }
+h1 { font-size: 1.6rem; margin-bottom: 0.5rem; }
+.subtitle { color: var(--muted); margin-bottom: 1.5rem; }
+table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
+th, td { border: 1px solid var(--border); padding: 0.5rem 0.75rem; text-align: left; }
+th { background: var(--pre-bg); font-weight: 600; font-size: 0.9rem; }
+td { font-size: 0.9rem; }
+.badge {
+  display: inline-block;
+  padding: 0.15rem 0.55rem;
+  border-radius: 4px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: #fff;
+}
+.badge-success { background: var(--success); }
+.badge-fail { background: var(--fail); }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+.goal-cell { max-width: 400px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+"""
+
+
+def generate_runs_index(runs_dir: Path) -> Path:
+    """Generate an ``index.html`` listing all runs across all tasks.
+
+    The page shows each run's goal (prompt), datetime, and status
+    (success / failure), with links to individual run reports.
+
+    Args:
+        runs_dir: The top-level runs directory (contains task subdirs).
+
+    Returns:
+        Path to the generated ``index.html``.
+    """
+    summaries: list[RunSummary] = list_runs(runs_dir)
+
+    rows: list[str] = []
+    for run in summaries:
+        status_label = "FAIL" if run.has_errors else "OK"
+        badge_cls = "badge-fail" if run.has_errors else "badge-success"
+        badge = f'<span class="badge {badge_cls}">{_html_escape(status_label)}</span>'
+
+        # Build link to the individual run report
+        report_index = run.run_dir / "report" / "index.html"
+        if report_index.exists():
+            rel_path = report_index.relative_to(runs_dir)
+            name_cell = (
+                f'<a href="{_html_escape(str(rel_path))}">'
+                f'{_html_escape(run.task_name)}</a>'
+            )
+        else:
+            name_cell = _html_escape(run.task_name)
+
+        goal = run.prompt or "(no goal)"
+        # Truncate long goals for the table display
+        goal_display = goal if len(goal) <= 120 else goal[:117] + "..."
+
+        rows.append(
+            f"<tr>"
+            f"<td>{name_cell}</td>"
+            f'<td class="goal-cell" title="{_html_escape(goal)}">{_html_escape(goal_display)}</td>'
+            f"<td>{_html_escape(run.timestamp)}</td>"
+            f"<td>{badge}</td>"
+            f"</tr>"
+        )
+
+    if rows:
+        table = (
+            "<table>\n"
+            "<tr><th>Task</th><th>Goal</th><th>Run Datetime</th><th>Status</th></tr>\n"
+            + "\n".join(rows)
+            + "\n</table>"
+        )
+    else:
+        table = "<p>No runs found.</p>"
+
+    body = (
+        f"<h1>Run Reports</h1>\n"
+        f'<p class="subtitle">{len(summaries)} run(s) found</p>\n'
+        f"{table}"
+    )
+
+    page_html = (
+        "<!DOCTYPE html>\n"
+        "<html lang=\"en\">\n<head>\n"
+        "<meta charset=\"utf-8\">\n"
+        "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n"
+        "<title>All Run Reports</title>\n"
+        f"<style>{_runs_index_css()}</style>\n"
+        "</head>\n<body>\n"
+        f"<div class=\"container\">\n{body}\n</div>\n"
+        "</body>\n</html>\n"
+    )
+
+    index_path = runs_dir / "index.html"
+    index_path.write_text(page_html)
+    return index_path

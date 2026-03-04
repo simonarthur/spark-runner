@@ -9,6 +9,7 @@ from spark_runner.report import (
     _html_escape,
     _markdown_to_html,
     generate_report,
+    generate_runs_index,
 )
 
 
@@ -461,3 +462,141 @@ class TestMarkdownToHtml:
         from spark_runner.report import _nav
         nav_html = _nav("index.html", has_problems=False)
         assert "disabled" in nav_html
+
+
+# ---------------------------------------------------------------------------
+# Runs index tests
+# ---------------------------------------------------------------------------
+
+def _make_runs_dir(
+    tmp_path: Path,
+    runs: list[dict[str, object]] | None = None,
+) -> Path:
+    """Create a synthetic runs directory with multiple run subdirs."""
+    runs_dir = tmp_path / "runs"
+    runs_dir.mkdir()
+
+    if runs is None:
+        runs = [
+            {
+                "task_name": "login-test",
+                "timestamp": "2025-06-01T10-00-00",
+                "prompt": "Test login flow end to end",
+                "phases": [
+                    {"name": "Login", "outcome": "SUCCESS", "screenshots": []},
+                ],
+            },
+            {
+                "task_name": "search-test",
+                "timestamp": "2025-06-02T14-30-00",
+                "prompt": "Search for products and verify results",
+                "phases": [
+                    {"name": "Search", "outcome": "FAILED", "screenshots": []},
+                ],
+            },
+        ]
+
+    for run in runs:
+        task_name = str(run["task_name"])
+        timestamp = str(run["timestamp"])
+        run_dir = runs_dir / task_name / timestamp
+        run_dir.mkdir(parents=True)
+        metadata = {
+            "task_name": task_name,
+            "prompt": run.get("prompt", ""),
+            "timestamp": timestamp.replace("T", " ").replace("-", ":", 2),
+            "base_url": "https://example.com",
+            "credential_profile": "default",
+            "phases": run.get("phases", []),
+            "screenshots": [],
+        }
+        (run_dir / "run_metadata.json").write_text(json.dumps(metadata))
+
+    return runs_dir
+
+
+class TestGenerateRunsIndex:
+    """Test the runs-level index.html generation."""
+
+    def test_creates_index_html(self, tmp_path: Path) -> None:
+        runs_dir = _make_runs_dir(tmp_path)
+        result = generate_runs_index(runs_dir)
+        assert result == runs_dir / "index.html"
+        assert result.exists()
+
+    def test_lists_all_runs(self, tmp_path: Path) -> None:
+        runs_dir = _make_runs_dir(tmp_path)
+        generate_runs_index(runs_dir)
+        html = (runs_dir / "index.html").read_text()
+
+        assert "login-test" in html
+        assert "search-test" in html
+        assert "Test login flow end to end" in html
+        assert "Search for products and verify results" in html
+
+    def test_shows_status_badges(self, tmp_path: Path) -> None:
+        runs_dir = _make_runs_dir(tmp_path)
+        generate_runs_index(runs_dir)
+        html = (runs_dir / "index.html").read_text()
+
+        assert "badge-success" in html
+        assert "badge-fail" in html
+        assert "OK" in html
+        assert "FAIL" in html
+
+    def test_links_to_existing_reports(self, tmp_path: Path) -> None:
+        runs_dir = _make_runs_dir(tmp_path)
+        # Create a report dir for one of the runs
+        report_dir = runs_dir / "login-test" / "2025-06-01T10-00-00" / "report"
+        report_dir.mkdir()
+        (report_dir / "index.html").write_text("<html>report</html>")
+
+        generate_runs_index(runs_dir)
+        html = (runs_dir / "index.html").read_text()
+
+        assert "login-test/2025-06-01T10-00-00/report/index.html" in html
+        # search-test has no report, should not be a link
+        assert "search-test/2025-06-02T14-30-00/report/index.html" not in html
+
+    def test_empty_runs_dir(self, tmp_path: Path) -> None:
+        runs_dir = _make_runs_dir(tmp_path, runs=[])
+        result = generate_runs_index(runs_dir)
+        html = result.read_text()
+
+        assert "No runs found" in html
+        assert "0 run(s)" in html
+
+    def test_shows_run_count(self, tmp_path: Path) -> None:
+        runs_dir = _make_runs_dir(tmp_path)
+        generate_runs_index(runs_dir)
+        html = (runs_dir / "index.html").read_text()
+
+        assert "2 run(s)" in html
+
+    def test_truncates_long_goals(self, tmp_path: Path) -> None:
+        long_goal = "x" * 200
+        runs_dir = _make_runs_dir(tmp_path, runs=[
+            {
+                "task_name": "long-goal",
+                "timestamp": "2025-01-01T00-00-00",
+                "prompt": long_goal,
+                "phases": [{"name": "Step", "outcome": "SUCCESS", "screenshots": []}],
+            },
+        ])
+        generate_runs_index(runs_dir)
+        html = (runs_dir / "index.html").read_text()
+
+        # The display text should be truncated (117 chars + "...")
+        assert "..." in html
+        # Full goal should still be in the title attribute for hover
+        assert f'title="{long_goal}"' in html
+
+    def test_generate_report_creates_runs_index(self, tmp_path: Path) -> None:
+        """generate_report should also create a runs-level index."""
+        runs_dir = _make_runs_dir(tmp_path)
+        run_dir = runs_dir / "login-test" / "2025-06-01T10-00-00"
+        generate_report(run_dir)
+
+        assert (runs_dir / "index.html").exists()
+        html = (runs_dir / "index.html").read_text()
+        assert "login-test" in html
