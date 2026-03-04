@@ -152,7 +152,15 @@ User's task:
     match: re.Match[str] | None = re.search(r"\[.*\]", text, re.DOTALL)
     if match:
         text = match.group(0)
-    phases: list[dict[str, str]] = json.loads(text)
+    try:
+        phases: list[dict[str, str]] = json.loads(text)
+    except json.JSONDecodeError as exc:
+        # Show what the LLM actually returned so the user can debug
+        preview = text[:500] if text else "(empty)"
+        raise ValueError(
+            f"LLM did not return valid JSON for task decomposition. "
+            f"Response preview:\n{preview}"
+        ) from exc
 
     base_instructions: str = """
                     "- Log in if necessary.\n"

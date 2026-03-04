@@ -141,6 +141,20 @@ class TestDecomposeTask:
         assert "{USER_EMAIL}" in prompt_text
         assert "{USER_PASSWORD}" in prompt_text
 
+    def test_invalid_json_raises_value_error(self, mock_summary_client: MagicMock) -> None:
+        """When the LLM returns non-JSON, a clear ValueError is raised."""
+        mock_summary_client.messages.create.return_value = make_llm_response(
+            "Here is my analysis of the coverage gaps..."
+        )
+        with pytest.raises(ValueError, match="LLM did not return valid JSON"):
+            spark_runner.decompose_task("Do something")
+
+    def test_empty_response_raises_value_error(self, mock_summary_client: MagicMock) -> None:
+        """When the LLM returns an empty string, a clear ValueError is raised."""
+        mock_summary_client.messages.create.return_value = make_llm_response("")
+        with pytest.raises(ValueError, match="LLM did not return valid JSON"):
+            spark_runner.decompose_task("Do something")
+
     def test_observations_included_in_prompt(self, mock_summary_client: MagicMock) -> None:
         """Relevant observations from prior runs are surfaced in the decomposition prompt."""
         phases = [{"name": "Login", "task": "Log in"}]
