@@ -131,10 +131,17 @@ Return ONLY valid JSON — an array of feature objects:
 ]"""}],
     )
 
-    text: str = response.content[0].text.strip()
-    match = re.search(r"\[.*\]", text, re.DOTALL)
+    raw_text: str = response.content[0].text.strip()
+    print(f"  LLM response length: {len(raw_text)} chars")
+    print(f"  LLM response (first 500 chars): {raw_text[:500]}")
+    match = re.search(r"\[.*\]", raw_text, re.DOTALL)
     if match:
-        text = match.group(0)
+        text: str = match.group(0)
+        print(f"  Extracted JSON array length: {len(text)} chars")
+    else:
+        print("  Warning: no JSON array found in response")
+        print(f"  Full response:\n{raw_text}")
+        return []
     try:
         raw_features: list[dict[str, Any]] = json.loads(text)
         return [
@@ -147,8 +154,9 @@ Return ONLY valid JSON — an array of feature objects:
             )
             for f in raw_features
         ]
-    except (json.JSONDecodeError, AttributeError):
-        print("Warning: could not parse feature extraction response")
+    except (json.JSONDecodeError, AttributeError) as exc:
+        print(f"Warning: could not parse feature extraction response: {exc}")
+        print(f"  Extracted text (first 500 chars): {text[:500]}")
         return []
 
 

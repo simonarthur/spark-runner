@@ -218,6 +218,7 @@ def _get_config_path(ctx: click.Context) -> str | None:
 
 @click.group(invoke_without_command=True)
 @click.option("--data-dir", type=click.Path(), default=None,
+              envvar="SPARK_RUNNER_DATA_DIR",
               help="Spark Runner home directory (tasks, goal summaries, runs). Default: ~/spark_runner")
 @click.option("--config", "config_path", type=click.Path(), default=None,
               help="Config file path")
