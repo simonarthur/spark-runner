@@ -1,10 +1,10 @@
-"""SparkyAI Browser Automation Runner.
+"""Spark Runner – Browser Automation.
 
 This package provides browser automation testing via the ``browser_use`` library
 and Anthropic Claude for LLM planning/summarization.
 
 Backward compatibility: All public symbols from the original monolith are
-re-exported here so that ``import sparky_runner`` continues to work.
+re-exported here so that ``import spark_runner`` continues to work.
 Module-level globals (HOST, USER_EMAIL, etc.) are preserved for tests that
 monkeypatch them.
 """
@@ -18,32 +18,32 @@ from typing import Any, Callable
 from dotenv import load_dotenv
 
 # ── Re-export submodule symbols ──────────────────────────────────────
-# These imports make ``from sparky_runner import X`` work for all public names.
+# These imports make ``from spark_runner import X`` work for all public names.
 
-from sparky_runner.models import (
+from spark_runner.models import (
     ClassificationRules,
     CredentialProfile,
     ModelConfig,
     PhaseResult,
     RunResult,
     ScreenshotRecord,
-    SparkyConfig,
+    SparkConfig,
     TaskSpec,
 )
-from sparky_runner.storage import (
+from spark_runner.storage import (
     safe_write_path,
     phase_name_to_slug,
     make_run_dir,
 )
-from sparky_runner.log import (
+from spark_runner.log import (
     log_event,
     log_problem,
 )
-from sparky_runner.classification import (
+from spark_runner.classification import (
     load_classification_rules,
     _build_rules_prompt_section,
 )
-from sparky_runner.orchestrator import (
+from spark_runner.orchestrator import (
     format_phase_plan,
     format_knowledge_match,
 )
@@ -53,7 +53,7 @@ from sparky_runner.orchestrator import (
 load_dotenv()
 
 # ── Backward-compatible module globals ───────────────────────────────
-# Tests monkeypatch these directly (e.g. ``monkeypatch.setattr(sparky_runner, "HOST", ...)``).
+# Tests monkeypatch these directly (e.g. ``monkeypatch.setattr(spark_runner, "HOST", ...)``).
 # The wrapper functions below read them at call time.
 
 import anthropic
@@ -78,25 +78,25 @@ _classification_rules: ClassificationRules = load_classification_rules(CLASSIFIC
 
 # ── Constants re-exported from submodules ─────────────────────────────
 
-from sparky_runner.execution import _PHASE_RULES, _REPLAY_PREFIX  # noqa: E402
+from spark_runner.execution import _PHASE_RULES, _REPLAY_PREFIX  # noqa: E402
 
 
 # ── Backward-compatible wrapper functions ─────────────────────────────
 # Each wrapper reads the current module globals at call time, then delegates
 # to the real implementation in a submodule.  This ensures that when tests
-# monkeypatch globals (e.g. ``sparky_runner.HOST``), the patched value flows
+# monkeypatch globals (e.g. ``spark_runner.HOST``), the patched value flows
 # through to the implementation.
 
-from sparky_runner import placeholders as _ph  # noqa: E402
-from sparky_runner import knowledge as _kn  # noqa: E402
-from sparky_runner import decomposition as _dc  # noqa: E402
-from sparky_runner import summarization as _sm  # noqa: E402
-from sparky_runner import classification as _cl  # noqa: E402
-from sparky_runner import observation_routing as _or  # noqa: E402
-from sparky_runner import observations as _ob  # noqa: E402
-from sparky_runner import goals as _gl  # noqa: E402
-from sparky_runner import execution as _ex  # noqa: E402
-from sparky_runner import storage as _st  # noqa: E402
+from spark_runner import placeholders as _ph  # noqa: E402
+from spark_runner import knowledge as _kn  # noqa: E402
+from spark_runner import decomposition as _dc  # noqa: E402
+from spark_runner import summarization as _sm  # noqa: E402
+from spark_runner import classification as _cl  # noqa: E402
+from spark_runner import observation_routing as _or  # noqa: E402
+from spark_runner import observations as _ob  # noqa: E402
+from spark_runner import goals as _gl  # noqa: E402
+from spark_runner import execution as _ex  # noqa: E402
+from spark_runner import storage as _st  # noqa: E402
 
 
 def _host_to_placeholder(text: str) -> str:
@@ -289,9 +289,9 @@ def clean_orphan_tasks() -> None:
 # ── USAGE constant (backward compat) ──────────────────────────────────
 
 USAGE: str = """\
-usage: sparky_runner.py [options] [goal_summary.json]
+usage: spark_runner.py [options] [goal_summary.json]
 
-SparkyAI Browser Automation Runner
+Spark Runner – Browser Automation
 
 positional arguments:
   goal_summary.json       Replay a previously saved goal summary file

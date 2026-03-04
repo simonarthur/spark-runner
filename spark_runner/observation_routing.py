@@ -8,8 +8,8 @@ from typing import Any
 
 import anthropic
 
-from sparky_runner.classification import _observation_text
-from sparky_runner.models import ModelConfig
+from spark_runner.classification import _observation_text
+from spark_runner.models import ModelConfig
 
 
 def route_observations_to_phases(

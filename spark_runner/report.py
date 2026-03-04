@@ -1,4 +1,4 @@
-"""HTML report generation for sparky_runner runs.
+"""HTML report generation for spark_runner runs.
 
 Produces a ``report/`` directory with interlinked HTML pages that can be
 opened directly from the local filesystem (no server required).  All CSS
@@ -13,9 +13,9 @@ import re
 from pathlib import Path
 from typing import Any
 
-from sparky_runner.models import ScreenshotRecord
-from sparky_runner.results import PhaseDetail, RunDetail, get_run_detail
-from sparky_runner.storage import phase_name_to_slug
+from spark_runner.models import ScreenshotRecord
+from spark_runner.results import PhaseDetail, RunDetail, get_run_detail
+from spark_runner.storage import phase_name_to_slug
 
 
 # ---------------------------------------------------------------------------
@@ -387,7 +387,11 @@ def _generate_events_page(run_dir: Path) -> str:
     return _page("Events", nav_html, body)
 
 
-def _generate_problems_page(run_dir: Path) -> str:
+def _generate_problems_page(
+    run_dir: Path,
+    detail: RunDetail,
+    ss_map: dict[str, list[ScreenshotRecord]],
+) -> str:
     """Generate the Problems page from ``problem_log.txt``."""
     nav_html = _nav("problems.html", _has_problems(run_dir))
 
@@ -395,11 +399,25 @@ def _generate_problems_page(run_dir: Path) -> str:
     if problem_log.exists() and problem_log.stat().st_size > 0:
         raw = problem_log.read_text()
         highlighted = _highlight_timestamps(raw)
-        content = f"<pre>{highlighted}</pre>"
+        log_section = f"<pre>{highlighted}</pre>"
     else:
-        content = '<p class="green-ok">No problems recorded.</p>'
+        log_section = '<p class="green-ok">No problems recorded.</p>'
 
-    body = f"<h1>Problem Log</h1>\n{content}"
+    # Screenshots from failed phases
+    ss_sections: list[str] = []
+    for phase in detail.phases:
+        if phase.outcome == "SUCCESS":
+            continue
+        phase_screenshots = ss_map.get(phase.name, [])
+        if phase_screenshots:
+            grid = _render_thumbnail_grid(phase_screenshots)
+            ss_sections.append(
+                f"<h2>{_html_escape(phase.name)}</h2>\n{grid}"
+            )
+
+    ss_html = "\n".join(ss_sections) if ss_sections else ""
+
+    body = f"<h1>Problem Log</h1>\n{log_section}\n{ss_html}"
     return _page("Problems", nav_html, body)
 
 
@@ -757,7 +775,7 @@ def generate_report(run_dir: Path) -> Path:
         "index.html": _generate_index_page(run_dir, detail, ss_map),
         "phases.html": _generate_phases_page(run_dir, detail, phase_summaries, ss_map),
         "events.html": _generate_events_page(run_dir),
-        "problems.html": _generate_problems_page(run_dir),
+        "problems.html": _generate_problems_page(run_dir, detail, ss_map),
         "conversations.html": _generate_conversations_page(run_dir, detail),
         "screenshots.html": _generate_screenshots_page(run_dir, detail, ss_map),
     }

@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock
 
-import sparky_runner
+import spark_runner
 
 
 class TestExtractAndLogObservations:
@@ -14,7 +14,7 @@ class TestExtractAndLogObservations:
         summary = "<OBSERVATIONS>The search bar was missing</OBSERVATIONS>"
         event_log = tmp_path / "event.log"
         problem_log = tmp_path / "problem.log"
-        sparky_runner._extract_and_log_observations(summary, "Test", event_log, problem_log)
+        spark_runner._extract_and_log_observations(summary, "Test", event_log, problem_log)
         # Observations are informational — they go to event log
         event_content = event_log.read_text()
         assert "OBSERVATIONS" in event_content
@@ -26,7 +26,7 @@ class TestExtractAndLogObservations:
         summary = "<observations>Something odd</observations>"
         event_log = tmp_path / "event.log"
         problem_log = tmp_path / "problem.log"
-        sparky_runner._extract_and_log_observations(summary, "Phase", event_log, problem_log)
+        spark_runner._extract_and_log_observations(summary, "Phase", event_log, problem_log)
         assert "Something odd" in event_log.read_text()
         assert not problem_log.exists()
 
@@ -35,7 +35,7 @@ class TestExtractAndLogObservations:
             event_log = tmp_path / f"e_{trivial}.log"
             problem_log = tmp_path / f"p_{trivial}.log"
             summary = f"<OBSERVATIONS>{trivial}</OBSERVATIONS>"
-            sparky_runner._extract_and_log_observations(summary, "P", event_log, problem_log)
+            spark_runner._extract_and_log_observations(summary, "P", event_log, problem_log)
             assert not problem_log.exists(), f"Trivial observation '{trivial}' should not be in problem log"
             assert not event_log.exists(), f"Trivial observation '{trivial}' should not be in event log"
 
@@ -49,7 +49,7 @@ class TestExtractAndLogObservations:
         )
         event_log = tmp_path / "event.log"
         problem_log = tmp_path / "problem.log"
-        sparky_runner._extract_and_log_observations(
+        spark_runner._extract_and_log_observations(
             summary, "Login", event_log, problem_log, success=True,
         )
         event_content = event_log.read_text()
@@ -62,7 +62,7 @@ class TestExtractAndLogObservations:
         summary = "<OBSERVATIONS>Button was disabled and unresponsive</OBSERVATIONS>"
         event_log = tmp_path / "event.log"
         problem_log = tmp_path / "problem.log"
-        sparky_runner._extract_and_log_observations(
+        spark_runner._extract_and_log_observations(
             summary, "Click", event_log, problem_log, success=False,
         )
         content = problem_log.read_text()
@@ -76,7 +76,7 @@ class TestExtractAndLogObservations:
         summary = "<OBSERVATIONS>Search broken</OBSERVATIONS>"
         event_log = tmp_path / "event.log"
         problem_log = tmp_path / "problem.log"
-        sparky_runner._extract_and_log_observations(
+        spark_runner._extract_and_log_observations(
             summary, "Phase", event_log, problem_log, success=False,
         )
         # Problem log has exactly one timestamped entry
@@ -92,7 +92,7 @@ class TestExtractAndLogObservations:
         summary = "### Sub-phase 1: Login\n**Status**: SUCCESS\n"
         event_log = tmp_path / "event.log"
         problem_log = tmp_path / "problem.log"
-        sparky_runner._extract_and_log_observations(summary, "Login", event_log, problem_log)
+        spark_runner._extract_and_log_observations(summary, "Login", event_log, problem_log)
         assert not event_log.exists()
         assert not problem_log.exists()
 
@@ -101,7 +101,7 @@ class TestExtractAndLogObservations:
         summary = "### Sub-phase 1: Login\n**Status**: FAILED\n"
         event_log = tmp_path / "event.log"
         problem_log = tmp_path / "problem.log"
-        sparky_runner._extract_and_log_observations(
+        spark_runner._extract_and_log_observations(
             summary, "Login", event_log, problem_log, success=False,
         )
         assert not problem_log.exists()
@@ -137,7 +137,7 @@ class TestExtractPhaseHistory:
     def test_empty_history(self) -> None:
         result = MagicMock()
         result.history = []
-        assert sparky_runner.extract_phase_history(result) == ""
+        assert spark_runner.extract_phase_history(result) == ""
 
     def test_full_model_output(self) -> None:
         mo = MagicMock()
@@ -152,7 +152,7 @@ class TestExtractPhaseHistory:
         result = MagicMock()
         result.history = [step]
 
-        text = sparky_runner.extract_phase_history(result)
+        text = spark_runner.extract_phase_history(result)
         assert "--- Step 1 ---" in text
         assert "Eval: goal met" in text
         assert "Memory: remember this" in text
@@ -165,7 +165,7 @@ class TestExtractPhaseHistory:
         result = MagicMock()
         result.history = [step]
 
-        text = sparky_runner.extract_phase_history(result)
+        text = spark_runner.extract_phase_history(result)
         assert "ERROR: Element not found" in text
 
     def test_no_model_output(self) -> None:
@@ -173,7 +173,7 @@ class TestExtractPhaseHistory:
         result = MagicMock()
         result.history = [step]
 
-        text = sparky_runner.extract_phase_history(result)
+        text = spark_runner.extract_phase_history(result)
         assert "--- Step 1 ---" in text
         # No Eval/Memory/Action lines
         assert "Eval:" not in text

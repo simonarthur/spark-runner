@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from sparky_runner.report import (
+from spark_runner.report import (
     _html_escape,
     _markdown_to_html,
     generate_report,
@@ -448,7 +448,7 @@ class TestMarkdownToHtml:
 
     def test_nav_links_all_pages(self) -> None:
         """Verify all 6 pages appear in the nav bar."""
-        from sparky_runner.report import _nav
+        from spark_runner.report import _nav
         nav_html = _nav("index.html", has_problems=True)
         assert "index.html" in nav_html
         assert "phases.html" in nav_html
@@ -458,6 +458,6 @@ class TestMarkdownToHtml:
         assert "screenshots.html" in nav_html
 
     def test_nav_disables_problems_when_empty(self) -> None:
-        from sparky_runner.report import _nav
+        from spark_runner.report import _nav
         nav_html = _nav("index.html", has_problems=False)
         assert "disabled" in nav_html

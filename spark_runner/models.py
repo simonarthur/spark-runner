@@ -1,4 +1,4 @@
-"""Pure dataclasses used across the sparky_runner package."""
+"""Pure dataclasses used across the spark_runner package."""
 
 from __future__ import annotations
 
@@ -34,10 +34,10 @@ class CredentialProfile:
 
 
 @dataclass
-class SparkyConfig:
-    """Central configuration for sparky_runner."""
+class SparkConfig:
+    """Central configuration for spark_runner."""
 
-    data_dir: Path = field(default_factory=lambda: Path.home() / "sparky_runner")
+    data_dir: Path = field(default_factory=lambda: Path.home() / "spark_runner")
     tasks_dir: Path | None = None
     goal_summaries_dir: Path | None = None
     runs_dir: Path | None = None
@@ -65,13 +65,21 @@ class SparkyConfig:
             self.runs_dir = self.data_dir / "runs"
         if not self.models:
             self.models = {
+                # NOTE: browser_control is reserved but not yet wired into the
+                # execution flow.  The orchestrator currently creates
+                # ChatBrowserUse() without consulting this config.
                 "browser_control": ModelConfig(model="claude-sonnet-4-5-20250929"),
+                # Used by orchestrator for phase-result summaries
                 "summarization": ModelConfig(
                     model="claude-sonnet-4-5-20250929", max_tokens=2048
                 ),
+                # Used by orchestrator to break a goal into phases
                 "task_decomposition": ModelConfig(model="claude-sonnet-4-5-20250929"),
+                # Used by orchestrator to classify observations
                 "classification": ModelConfig(model="claude-sonnet-4-5-20250929"),
+                # Used by orchestrator to find relevant prior knowledge
                 "knowledge_matching": ModelConfig(model="claude-sonnet-4-5-20250929"),
+                # Used by orchestrator to generate short task names
                 "task_naming": ModelConfig(
                     model="claude-sonnet-4-5-20250929", max_tokens=64
                 ),

@@ -1,24 +1,24 @@
-"""Tests for sparky_runner.credentials and sparky_runner.placeholders credential helpers."""
+"""Tests for spark_runner.credentials and spark_runner.placeholders credential helpers."""
 
 from __future__ import annotations
 
 import pytest
 
-from sparky_runner.credentials import (
+from spark_runner.credentials import (
     get_credentials,
     list_credential_profiles,
     switch_profile,
 )
-from sparky_runner.models import CredentialProfile, SparkyConfig
-from sparky_runner.placeholders import cred_placeholder_to_value
+from spark_runner.models import CredentialProfile, SparkConfig
+from spark_runner.placeholders import cred_placeholder_to_value
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────
 
 
-def _make_config(profiles: dict[str, CredentialProfile], active: str = "default") -> SparkyConfig:
-    """Build a minimal SparkyConfig with the given credential profiles."""
-    return SparkyConfig(
+def _make_config(profiles: dict[str, CredentialProfile], active: str = "default") -> SparkConfig:
+    """Build a minimal SparkConfig with the given credential profiles."""
+    return SparkConfig(
         credentials=profiles,
         active_credential_profile=active,
     )
@@ -79,9 +79,9 @@ class TestListCredentialProfiles:
         assert result == ["default"]
 
     def test_empty_credentials_returns_empty_list(self) -> None:
-        # SparkyConfig.__post_init__ always adds "default" when empty,
+        # SparkConfig.__post_init__ always adds "default" when empty,
         # so we test that the sorted list is consistently returned.
-        config = SparkyConfig()
+        config = SparkConfig()
         result = list_credential_profiles(config)
         assert isinstance(result, list)
         assert "default" in result

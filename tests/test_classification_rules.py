@@ -9,8 +9,8 @@ from pathlib import Path
 
 import pytest
 
-import sparky_runner
-from sparky_runner import ClassificationRules, load_classification_rules, _build_rules_prompt_section
+import spark_runner
+from spark_runner import ClassificationRules, load_classification_rules, _build_rules_prompt_section
 
 
 # ── load_classification_rules ────────────────────────────────────────────

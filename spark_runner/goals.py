@@ -6,8 +6,8 @@ import json
 from pathlib import Path
 from typing import Any, Callable
 
-from sparky_runner.classification import _observation_text
-from sparky_runner.execution import _REPLAY_PREFIX
+from spark_runner.classification import _observation_text
+from spark_runner.execution import _REPLAY_PREFIX
 
 
 def list_goals(

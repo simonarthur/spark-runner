@@ -1,4 +1,4 @@
-"""Tests for show_goal_detail and delete_goal in sparky_runner.goals."""
+"""Tests for show_goal_detail and delete_goal in spark_runner.goals."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 import pytest
 
-from sparky_runner.goals import delete_goal, show_goal_detail
+from spark_runner.goals import delete_goal, show_goal_detail
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────

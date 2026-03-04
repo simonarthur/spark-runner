@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import click.testing
 import pytest
 
-from sparky_runner.cli import cli, _parse_model_overrides
+from spark_runner.cli import cli, _parse_model_overrides
 
 
 @pytest.fixture()
@@ -23,7 +23,7 @@ class TestTopLevelCLI:
     def test_no_args_shows_help(self, runner: click.testing.CliRunner) -> None:
         result = runner.invoke(cli, [])
         assert result.exit_code == 0
-        assert "SparkyAI Browser Automation Runner" in result.output
+        assert "Spark Runner" in result.output
 
     def test_help_flag(self, runner: click.testing.CliRunner) -> None:
         result = runner.invoke(cli, ["--help"])
@@ -35,7 +35,7 @@ class TestTopLevelCLI:
     def test_help_shows_data_dir(self, runner: click.testing.CliRunner) -> None:
         result = runner.invoke(cli, ["--help"])
         assert "--data-dir" in result.output
-        assert "Sparky Runner home directory" in result.output
+        assert "Spark Runner home directory" in result.output
 
     def test_help_shows_config(self, runner: click.testing.CliRunner) -> None:
         result = runner.invoke(cli, ["--help"])
@@ -52,8 +52,8 @@ class TestTopLevelCLI:
 class TestDataDirPropagation:
     """--data-dir on the top-level group propagates to all subcommands."""
 
-    @patch("sparky_runner.cli.build_config")
-    @patch("sparky_runner.orchestrator.run_single", new_callable=AsyncMock)
+    @patch("spark_runner.cli.build_config")
+    @patch("spark_runner.orchestrator.run_single", new_callable=AsyncMock)
     def test_data_dir_propagates_to_run(
         self,
         mock_run: AsyncMock,
@@ -68,7 +68,7 @@ class TestDataDirPropagation:
         assert result.exit_code == 0
         assert mock_config.call_args.kwargs["data_dir"] == tmp_path
 
-    @patch("sparky_runner.cli.build_config")
+    @patch("spark_runner.cli.build_config")
     def test_data_dir_propagates_to_goals_list(
         self,
         mock_config: MagicMock,
@@ -78,14 +78,14 @@ class TestDataDirPropagation:
         mock_cfg = MagicMock()
         mock_cfg.goal_summaries_dir = tmp_path
         mock_config.return_value = mock_cfg
-        with patch("sparky_runner.goals.list_goals"):
+        with patch("spark_runner.goals.list_goals"):
             result = runner.invoke(
                 cli, ["--data-dir", str(tmp_path), "goals", "list"]
             )
         assert result.exit_code == 0
         assert mock_config.call_args.kwargs["data_dir"] == tmp_path
 
-    @patch("sparky_runner.cli.build_config")
+    @patch("spark_runner.cli.build_config")
     def test_data_dir_propagates_to_results_list(
         self,
         mock_config: MagicMock,
@@ -95,14 +95,14 @@ class TestDataDirPropagation:
         mock_cfg = MagicMock()
         mock_cfg.runs_dir = tmp_path
         mock_config.return_value = mock_cfg
-        with patch("sparky_runner.results.list_runs", return_value=[]):
+        with patch("spark_runner.results.list_runs", return_value=[]):
             result = runner.invoke(
                 cli, ["--data-dir", str(tmp_path), "results", "list"]
             )
         assert result.exit_code == 0
         assert mock_config.call_args.kwargs["data_dir"] == tmp_path
 
-    @patch("sparky_runner.cli.build_config")
+    @patch("spark_runner.cli.build_config")
     def test_data_dir_propagates_to_results_errors(
         self,
         mock_config: MagicMock,
@@ -112,14 +112,14 @@ class TestDataDirPropagation:
         mock_cfg = MagicMock()
         mock_cfg.runs_dir = tmp_path
         mock_config.return_value = mock_cfg
-        with patch("sparky_runner.results.list_runs", return_value=[]):
+        with patch("spark_runner.results.list_runs", return_value=[]):
             result = runner.invoke(
                 cli, ["--data-dir", str(tmp_path), "results", "errors"]
             )
         assert result.exit_code == 0
         assert mock_config.call_args.kwargs["data_dir"] == tmp_path
 
-    @patch("sparky_runner.cli.build_config")
+    @patch("spark_runner.cli.build_config")
     def test_data_dir_propagates_to_goals_classify(
         self,
         mock_config: MagicMock,
@@ -131,14 +131,14 @@ class TestDataDirPropagation:
         mock_cfg.get_model.return_value = MagicMock()
         mock_config.return_value = mock_cfg
         with patch("anthropic.Anthropic"), \
-             patch("sparky_runner.goals.classify_existing_goals"):
+             patch("spark_runner.goals.classify_existing_goals"):
             result = runner.invoke(
                 cli, ["--data-dir", str(tmp_path), "goals", "classify"]
             )
         assert result.exit_code == 0
         assert mock_config.call_args.kwargs["data_dir"] == tmp_path
 
-    @patch("sparky_runner.cli.build_config")
+    @patch("spark_runner.cli.build_config")
     def test_data_dir_propagates_to_goals_orphans(
         self,
         mock_config: MagicMock,
@@ -149,15 +149,15 @@ class TestDataDirPropagation:
         mock_cfg.tasks_dir = tmp_path
         mock_cfg.goal_summaries_dir = tmp_path
         mock_config.return_value = mock_cfg
-        with patch("sparky_runner.storage.find_orphan_tasks"):
+        with patch("spark_runner.storage.find_orphan_tasks"):
             result = runner.invoke(
                 cli, ["--data-dir", str(tmp_path), "goals", "orphans"]
             )
         assert result.exit_code == 0
         assert mock_config.call_args.kwargs["data_dir"] == tmp_path
 
-    @patch("sparky_runner.cli.build_config")
-    @patch("sparky_runner.orchestrator.run_single", new_callable=AsyncMock)
+    @patch("spark_runner.cli.build_config")
+    @patch("spark_runner.orchestrator.run_single", new_callable=AsyncMock)
     def test_no_data_dir_passes_none(
         self,
         mock_run: AsyncMock,
@@ -197,8 +197,8 @@ class TestRunURLValidation:
         assert result.exit_code != 0
         assert "looks like a flag" in result.output
 
-    @patch("sparky_runner.cli.build_config")
-    @patch("sparky_runner.orchestrator.run_single", new_callable=AsyncMock)
+    @patch("spark_runner.cli.build_config")
+    @patch("spark_runner.orchestrator.run_single", new_callable=AsyncMock)
     def test_url_with_valid_value_accepted(
         self,
         mock_run: AsyncMock,
@@ -234,8 +234,8 @@ class TestRunGoalFileValidation:
         assert result.exit_code != 0
         assert "Goal file not found" in result.output
 
-    @patch("sparky_runner.cli.build_config")
-    @patch("sparky_runner.orchestrator.run_single", new_callable=AsyncMock)
+    @patch("spark_runner.cli.build_config")
+    @patch("spark_runner.orchestrator.run_single", new_callable=AsyncMock)
     def test_existing_goal_file_accepted(
         self,
         mock_run: AsyncMock,
@@ -249,8 +249,8 @@ class TestRunGoalFileValidation:
         result = runner.invoke(cli, ["run", str(goal)])
         assert result.exit_code == 0
 
-    @patch("sparky_runner.cli.build_config")
-    @patch("sparky_runner.orchestrator.run_single", new_callable=AsyncMock)
+    @patch("spark_runner.cli.build_config")
+    @patch("spark_runner.orchestrator.run_single", new_callable=AsyncMock)
     def test_goal_name_resolved_from_goal_summaries_dir(
         self,
         mock_run: AsyncMock,
@@ -270,8 +270,8 @@ class TestRunGoalFileValidation:
         task_spec = mock_run.call_args.args[0]
         assert task_spec.goal_path == goal
 
-    @patch("sparky_runner.cli.build_config")
-    @patch("sparky_runner.orchestrator.run_single", new_callable=AsyncMock)
+    @patch("spark_runner.cli.build_config")
+    @patch("spark_runner.orchestrator.run_single", new_callable=AsyncMock)
     def test_goal_name_without_extension_resolved(
         self,
         mock_run: AsyncMock,
@@ -291,7 +291,7 @@ class TestRunGoalFileValidation:
         task_spec = mock_run.call_args.args[0]
         assert task_spec.goal_path == goal
 
-    @patch("sparky_runner.cli.build_config")
+    @patch("spark_runner.cli.build_config")
     def test_goal_name_not_found_in_goal_summaries_dir(
         self,
         mock_config: MagicMock,
@@ -354,8 +354,8 @@ class TestRunParallelOption:
         assert result.exit_code != 0
         assert "not a valid integer" in result.output.lower() or "invalid" in result.output.lower()
 
-    @patch("sparky_runner.cli.build_config")
-    @patch("sparky_runner.orchestrator.run_single", new_callable=AsyncMock)
+    @patch("spark_runner.cli.build_config")
+    @patch("spark_runner.orchestrator.run_single", new_callable=AsyncMock)
     def test_parallel_valid_integer(
         self,
         mock_run: AsyncMock,
@@ -371,8 +371,8 @@ class TestRunParallelOption:
 
 
 class TestRunPromptHandling:
-    @patch("sparky_runner.cli.build_config")
-    @patch("sparky_runner.orchestrator.run_single", new_callable=AsyncMock)
+    @patch("spark_runner.cli.build_config")
+    @patch("spark_runner.orchestrator.run_single", new_callable=AsyncMock)
     def test_single_prompt(
         self,
         mock_run: AsyncMock,
@@ -384,8 +384,8 @@ class TestRunPromptHandling:
         assert result.exit_code == 0
         mock_run.assert_called_once()
 
-    @patch("sparky_runner.cli.build_config")
-    @patch("sparky_runner.orchestrator.run_multiple", new_callable=AsyncMock)
+    @patch("spark_runner.cli.build_config")
+    @patch("spark_runner.orchestrator.run_multiple", new_callable=AsyncMock)
     def test_multiple_prompts(
         self,
         mock_run: AsyncMock,
@@ -403,7 +403,7 @@ class TestRunPromptHandling:
         assert tasks[0].prompt == "first"
         assert tasks[1].prompt == "second"
 
-    @patch("sparky_runner.cli.build_config")
+    @patch("spark_runner.cli.build_config")
     def test_no_prompt_no_goal_prompts_interactively(
         self,
         mock_config: MagicMock,
@@ -418,8 +418,8 @@ class TestRunPromptHandling:
 
 
 class TestRunFlagCombinations:
-    @patch("sparky_runner.cli.build_config")
-    @patch("sparky_runner.orchestrator.run_single", new_callable=AsyncMock)
+    @patch("spark_runner.cli.build_config")
+    @patch("spark_runner.orchestrator.run_single", new_callable=AsyncMock)
     def test_boolean_flags_passed_to_config(
         self,
         mock_run: AsyncMock,
@@ -443,8 +443,8 @@ class TestRunFlagCombinations:
         assert kwargs["auto_close"] is True
         assert kwargs["headless"] is True
 
-    @patch("sparky_runner.cli.build_config")
-    @patch("sparky_runner.orchestrator.run_single", new_callable=AsyncMock)
+    @patch("spark_runner.cli.build_config")
+    @patch("spark_runner.orchestrator.run_single", new_callable=AsyncMock)
     def test_default_flags(
         self,
         mock_run: AsyncMock,
@@ -509,7 +509,7 @@ class TestResultsSubcommandErrors:
         assert result.exit_code != 0
         assert "Usage" in result.output
 
-    @patch("sparky_runner.cli.build_config")
+    @patch("spark_runner.cli.build_config")
     def test_results_show_missing_path_lists_runs(
         self, mock_config: MagicMock, runner: click.testing.CliRunner, tmp_path: Path
     ) -> None:
@@ -523,7 +523,7 @@ class TestResultsSubcommandErrors:
         assert result.exit_code != 0
         assert "my-task/2026-01-01_12-00-00" in result.output
 
-    @patch("sparky_runner.cli.build_config")
+    @patch("spark_runner.cli.build_config")
     def test_results_show_missing_path_no_runs(
         self, mock_config: MagicMock, runner: click.testing.CliRunner, tmp_path: Path
     ) -> None:
@@ -534,7 +534,7 @@ class TestResultsSubcommandErrors:
         assert result.exit_code != 0
         assert "No runs found" in result.output
 
-    @patch("sparky_runner.cli.build_config")
+    @patch("spark_runner.cli.build_config")
     def test_results_show_nonexistent_path_lists_runs(
         self, mock_config: MagicMock, runner: click.testing.CliRunner, tmp_path: Path
     ) -> None:
@@ -549,7 +549,7 @@ class TestResultsSubcommandErrors:
         assert "Run not found" in result.output
         assert "login-task/2026-02-01_08-00-00" in result.output
 
-    @patch("sparky_runner.cli.build_config")
+    @patch("spark_runner.cli.build_config")
     def test_results_show_resolves_relative_to_runs_dir(
         self, mock_config: MagicMock, runner: click.testing.CliRunner, tmp_path: Path
     ) -> None:
@@ -558,8 +558,8 @@ class TestResultsSubcommandErrors:
         run_dir = runs_dir / "my-task" / "2026-03-03_09-00-00"
         run_dir.mkdir(parents=True)
         mock_config.return_value = MagicMock(runs_dir=runs_dir)
-        with patch("sparky_runner.results.get_run_detail") as mock_detail, \
-             patch("sparky_runner.results.format_run_detail", return_value="detail"):
+        with patch("spark_runner.results.get_run_detail") as mock_detail, \
+             patch("spark_runner.results.format_run_detail", return_value="detail"):
             mock_detail.return_value = MagicMock(
                 screenshots=[], phases=[], task_name="my-task",
             )
@@ -569,7 +569,7 @@ class TestResultsSubcommandErrors:
         assert result.exit_code == 0
         mock_detail.assert_called_once_with(run_dir)
 
-    @patch("sparky_runner.cli.build_config")
+    @patch("spark_runner.cli.build_config")
     def test_results_screenshots_missing_path_lists_runs(
         self, mock_config: MagicMock, runner: click.testing.CliRunner, tmp_path: Path
     ) -> None:
@@ -582,7 +582,7 @@ class TestResultsSubcommandErrors:
         assert result.exit_code != 0
         assert "search-task/2026-01-15_10-30-00" in result.output
 
-    @patch("sparky_runner.cli.build_config")
+    @patch("spark_runner.cli.build_config")
     def test_results_screenshots_nonexistent_path(
         self, mock_config: MagicMock, runner: click.testing.CliRunner, tmp_path: Path
     ) -> None:
@@ -615,73 +615,73 @@ class TestRunHelp:
 
 
 class TestLegacyMain:
-    @patch("sparky_runner.cli.cli")
+    @patch("spark_runner.cli.cli")
     def test_list_goals_flag(self, mock_cli: MagicMock) -> None:
-        from sparky_runner.cli import legacy_main
+        from spark_runner.cli import legacy_main
 
         import sys
         original = sys.argv[:]
         try:
-            sys.argv = ["sparky_runner.py", "--list-goals"]
+            sys.argv = ["spark_runner.py", "--list-goals"]
             legacy_main()
-            assert sys.argv == ["sparky_runner.py", "goals", "list"]
+            assert sys.argv == ["spark_runner.py", "goals", "list"]
             mock_cli.assert_called_once()
         finally:
             sys.argv = original
 
-    @patch("sparky_runner.cli.cli")
+    @patch("spark_runner.cli.cli")
     def test_classify_existing_flag(self, mock_cli: MagicMock) -> None:
-        from sparky_runner.cli import legacy_main
+        from spark_runner.cli import legacy_main
 
         import sys
         original = sys.argv[:]
         try:
-            sys.argv = ["sparky_runner.py", "--classify-existing"]
+            sys.argv = ["spark_runner.py", "--classify-existing"]
             legacy_main()
-            assert sys.argv == ["sparky_runner.py", "goals", "classify"]
+            assert sys.argv == ["spark_runner.py", "goals", "classify"]
             mock_cli.assert_called_once()
         finally:
             sys.argv = original
 
-    @patch("sparky_runner.cli.cli")
+    @patch("spark_runner.cli.cli")
     def test_find_orphans_flag(self, mock_cli: MagicMock) -> None:
-        from sparky_runner.cli import legacy_main
+        from spark_runner.cli import legacy_main
 
         import sys
         original = sys.argv[:]
         try:
-            sys.argv = ["sparky_runner.py", "--find-orphans"]
+            sys.argv = ["spark_runner.py", "--find-orphans"]
             legacy_main()
-            assert sys.argv == ["sparky_runner.py", "goals", "orphans"]
+            assert sys.argv == ["spark_runner.py", "goals", "orphans"]
             mock_cli.assert_called_once()
         finally:
             sys.argv = original
 
-    @patch("sparky_runner.cli.cli")
+    @patch("spark_runner.cli.cli")
     def test_clean_orphans_flag(self, mock_cli: MagicMock) -> None:
-        from sparky_runner.cli import legacy_main
+        from spark_runner.cli import legacy_main
 
         import sys
         original = sys.argv[:]
         try:
-            sys.argv = ["sparky_runner.py", "--clean-orphans"]
+            sys.argv = ["spark_runner.py", "--clean-orphans"]
             legacy_main()
-            assert sys.argv == ["sparky_runner.py", "goals", "orphans", "--clean"]
+            assert sys.argv == ["spark_runner.py", "goals", "orphans", "--clean"]
             mock_cli.assert_called_once()
         finally:
             sys.argv = original
 
-    @patch("sparky_runner.cli.cli")
+    @patch("spark_runner.cli.cli")
     def test_prompt_flag_maps_to_run(self, mock_cli: MagicMock) -> None:
-        from sparky_runner.cli import legacy_main
+        from spark_runner.cli import legacy_main
 
         import sys
         original = sys.argv[:]
         try:
-            sys.argv = ["sparky_runner.py", "-p", "do stuff", "--auto-close"]
+            sys.argv = ["spark_runner.py", "-p", "do stuff", "--auto-close"]
             legacy_main()
             assert sys.argv == [
-                "sparky_runner.py", "run", "-p", "do stuff", "--auto-close"
+                "spark_runner.py", "run", "-p", "do stuff", "--auto-close"
             ]
             mock_cli.assert_called_once()
         finally:

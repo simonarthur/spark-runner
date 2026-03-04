@@ -9,9 +9,9 @@ from typing import Any
 
 import anthropic
 
-from sparky_runner.classification import _observation_text
-from sparky_runner.log import log_event, log_problem
-from sparky_runner.models import ModelConfig
+from spark_runner.classification import _observation_text
+from spark_runner.log import log_event, log_problem
+from spark_runner.models import ModelConfig
 
 
 def _extract_and_log_observations(

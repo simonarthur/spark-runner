@@ -9,7 +9,7 @@ from typing import Any
 import anthropic
 from browser_use.agent.views import AgentHistoryList
 
-from sparky_runner.models import ModelConfig
+from spark_runner.models import ModelConfig
 
 
 def extract_phase_history(result: AgentHistoryList[Any]) -> str:

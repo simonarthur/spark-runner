@@ -1,4 +1,4 @@
-"""Tests for sparky_runner.results: run listing, filtering, detail formatting, metadata."""
+"""Tests for spark_runner.results: run listing, filtering, detail formatting, metadata."""
 
 from __future__ import annotations
 
@@ -8,8 +8,8 @@ from typing import Any
 
 import pytest
 
-from sparky_runner.models import ScreenshotRecord
-from sparky_runner.results import (
+from spark_runner.models import ScreenshotRecord
+from spark_runner.results import (
     RunDetail,
     RunSummary,
     format_run_summary,

@@ -10,8 +10,8 @@ from typing import Any
 import click
 from click.shell_completion import CompletionItem
 
-from sparky_runner.config import build_config
-from sparky_runner.models import SparkyConfig, TaskSpec
+from spark_runner.config import build_config
+from spark_runner.models import SparkConfig, TaskSpec
 
 
 def _parse_model_overrides(values: tuple[str, ...]) -> dict[str, str]:
@@ -112,7 +112,7 @@ def _file_mtime_label(path: Path) -> str:
         return ""
 
 
-def _build_config_for_completion(ctx: click.Context) -> SparkyConfig:
+def _build_config_for_completion(ctx: click.Context) -> SparkConfig:
     """Build a config from whatever context is available during tab completion."""
     data_dir = _get_data_dir(ctx)
     config_path = _get_config_path(ctx)
@@ -218,12 +218,12 @@ def _get_config_path(ctx: click.Context) -> str | None:
 
 @click.group(invoke_without_command=True)
 @click.option("--data-dir", type=click.Path(), default=None,
-              help="Sparky Runner home directory (tasks, goal summaries, runs). Default: ~/sparky_runner")
+              help="Spark Runner home directory (tasks, goal summaries, runs). Default: ~/spark_runner")
 @click.option("--config", "config_path", type=click.Path(), default=None,
               help="Config file path")
 @click.pass_context
 def cli(ctx: click.Context, data_dir: str | None, config_path: str | None) -> None:
-    """SparkyAI Browser Automation Runner."""
+    """Spark Runner – Browser Automation."""
     ctx.ensure_object(dict)
     ctx.obj["data_dir"] = data_dir
     ctx.obj["config_path"] = config_path
@@ -279,7 +279,7 @@ def run(
     config_path = _get_config_path(ctx)
     model_overrides = _parse_model_overrides(model_strs) if model_strs else None
 
-    config: SparkyConfig = build_config(
+    config: SparkConfig = build_config(
         config_path=Path(config_path) if config_path else None,
         data_dir=Path(data_dir) if data_dir else None,
         base_url=base_url,
@@ -316,12 +316,12 @@ def run(
         ))
 
     print("=" * 60)
-    print("  SparkyAI Browser Automation")
+    print("  Spark Runner – Browser Automation")
     print(f"  Target: {config.base_url}")
     print("=" * 60)
     print()
 
-    from sparky_runner.orchestrator import run_multiple, run_single
+    from spark_runner.orchestrator import run_multiple, run_single
 
     if len(tasks) == 1 and not shared_session:
         asyncio.run(run_single(tasks[0], config))
@@ -348,8 +348,8 @@ def goals_list(ctx: click.Context) -> None:
         config_path=Path(config_path) if config_path else None,
         data_dir=Path(data_dir) if data_dir else None,
     )
-    from sparky_runner.goals import list_goals
-    from sparky_runner.orchestrator import _make_restore_fn
+    from spark_runner.goals import list_goals
+    from spark_runner.orchestrator import _make_restore_fn
 
     assert config.goal_summaries_dir is not None
     list_goals(config.goal_summaries_dir, _make_restore_fn(config))
@@ -366,8 +366,8 @@ def goals_show(ctx: click.Context, goal_name: str) -> None:
         config_path=Path(config_path) if config_path else None,
         data_dir=Path(data_dir) if data_dir else None,
     )
-    from sparky_runner.goals import show_goal_detail
-    from sparky_runner.orchestrator import _make_restore_fn
+    from spark_runner.goals import show_goal_detail
+    from spark_runner.orchestrator import _make_restore_fn
 
     assert config.goal_summaries_dir is not None
     show_goal_detail(config.goal_summaries_dir, goal_name, _make_restore_fn(config))
@@ -385,7 +385,7 @@ def goals_delete(ctx: click.Context, goal_name: str, force: bool) -> None:
         config_path=Path(config_path) if config_path else None,
         data_dir=Path(data_dir) if data_dir else None,
     )
-    from sparky_runner.goals import delete_goal
+    from spark_runner.goals import delete_goal
 
     assert config.goal_summaries_dir is not None
     assert config.tasks_dir is not None
@@ -403,8 +403,8 @@ def goals_classify(ctx: click.Context) -> None:
         data_dir=Path(data_dir) if data_dir else None,
     )
     import anthropic as anth
-    from sparky_runner.classification import classify_observations
-    from sparky_runner.goals import classify_existing_goals
+    from spark_runner.classification import classify_observations
+    from spark_runner.goals import classify_existing_goals
 
     client = anth.Anthropic()
     model_config = config.get_model("classification")
@@ -427,7 +427,7 @@ def goals_orphans(ctx: click.Context, clean: bool) -> None:
         config_path=Path(config_path) if config_path else None,
         data_dir=Path(data_dir) if data_dir else None,
     )
-    from sparky_runner.storage import clean_orphan_tasks, find_orphan_tasks
+    from spark_runner.storage import clean_orphan_tasks, find_orphan_tasks
 
     assert config.tasks_dir is not None
     assert config.goal_summaries_dir is not None
@@ -457,7 +457,7 @@ def results_list(ctx: click.Context, task_name: str | None) -> None:
         config_path=Path(config_path) if config_path else None,
         data_dir=Path(data_dir) if data_dir else None,
     )
-    from sparky_runner.results import format_run_summary, list_runs
+    from spark_runner.results import format_run_summary, list_runs
 
     assert config.runs_dir is not None
     runs = list_runs(config.runs_dir, task_name)
@@ -481,7 +481,7 @@ def results_show(ctx: click.Context, run_path: str | None) -> None:
         data_dir=Path(data_dir) if data_dir else None,
     )
     resolved = _resolve_run_path(run_path, config.runs_dir)
-    from sparky_runner.results import format_run_detail, get_run_detail
+    from spark_runner.results import format_run_detail, get_run_detail
 
     detail = get_run_detail(resolved)
     print(format_run_detail(detail))
@@ -498,7 +498,7 @@ def results_errors(ctx: click.Context, task_name: str | None) -> None:
         config_path=Path(config_path) if config_path else None,
         data_dir=Path(data_dir) if data_dir else None,
     )
-    from sparky_runner.results import format_run_summary, list_runs
+    from spark_runner.results import format_run_summary, list_runs
 
     assert config.runs_dir is not None
     runs = [r for r in list_runs(config.runs_dir, task_name) if r.has_errors]
@@ -522,7 +522,7 @@ def results_screenshots(ctx: click.Context, run_path: str | None) -> None:
         data_dir=Path(data_dir) if data_dir else None,
     )
     resolved = _resolve_run_path(run_path, config.runs_dir)
-    from sparky_runner.results import get_run_detail
+    from spark_runner.results import get_run_detail
 
     detail = get_run_detail(resolved)
     all_ss = list(detail.screenshots)
@@ -555,7 +555,7 @@ def results_report(ctx: click.Context, run_path: str | None) -> None:
         data_dir=Path(data_dir) if data_dir else None,
     )
     resolved = _resolve_run_path(run_path, config.runs_dir)
-    from sparky_runner.report import generate_report
+    from spark_runner.report import generate_report
 
     index_path = generate_report(resolved)
     print(f"HTML report generated: {index_path}")
@@ -582,7 +582,7 @@ def generate_goals_cmd(
         config_path=Path(config_path) if config_path else None,
         data_dir=Path(data_dir) if data_dir else None,
     )
-    from sparky_runner.goal_generator import generate_goals_from_source
+    from spark_runner.goal_generator import generate_goals_from_source
 
     out = Path(output_dir) if output_dir else config.goal_summaries_dir
     assert out is not None
@@ -606,7 +606,7 @@ def record_cmd(
         config_path=Path(config_path) if config_path else None,
         data_dir=Path(data_dir) if data_dir else None,
     )
-    from sparky_runner.trajectory_recorder import record_and_generate_goal
+    from spark_runner.trajectory_recorder import record_and_generate_goal
 
     base = url or config.base_url
     asyncio.run(record_and_generate_goal(base, config))
@@ -616,7 +616,7 @@ def record_cmd(
 
 
 def legacy_main() -> None:
-    """Backward-compatible entry point for ``python sparky_runner.py`` usage.
+    """Backward-compatible entry point for ``python spark_runner.py`` usage.
 
     Translates the old-style sys.argv flags into Click-compatible invocations.
     """

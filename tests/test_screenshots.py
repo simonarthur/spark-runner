@@ -1,4 +1,4 @@
-"""Tests for sparky_runner.screenshots: directory creation and capture helpers."""
+"""Tests for spark_runner.screenshots: directory creation and capture helpers."""
 
 from __future__ import annotations
 
@@ -7,8 +7,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from sparky_runner.models import ScreenshotRecord
-from sparky_runner.screenshots import (
+from spark_runner.models import ScreenshotRecord
+from spark_runner.screenshots import (
     capture_screenshot,
     make_screenshots_dir,
 )

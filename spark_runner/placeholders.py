@@ -47,7 +47,7 @@ def cred_placeholder_to_value(
     Also handles the legacy ``{USER_EMAIL}`` and ``{USER_PASSWORD}`` via the
     ``default`` profile.
     """
-    from sparky_runner.models import CredentialProfile  # avoid circular import
+    from spark_runner.models import CredentialProfile  # avoid circular import
 
     # Legacy placeholders via default profile
     default = credentials.get("default", CredentialProfile())

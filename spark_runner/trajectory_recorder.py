@@ -11,7 +11,7 @@ from typing import Any
 
 import anthropic
 
-from sparky_runner.models import ModelConfig, SparkyConfig
+from spark_runner.models import ModelConfig, SparkConfig
 
 
 @dataclass
@@ -28,7 +28,7 @@ class RecordedAction:
 
 async def record_user_trajectory(
     base_url: str,
-    config: SparkyConfig,
+    config: SparkConfig,
 ) -> list[RecordedAction]:
     """Open a browser and record user actions as structured events.
 
@@ -76,9 +76,9 @@ async def record_user_trajectory(
         # Set up console listener for action reports
         def on_console(msg: Any) -> None:
             text = msg.text
-            if text.startswith("SPARKY_ACTION:"):
+            if text.startswith("SPARK_ACTION:"):
                 try:
-                    data = json.loads(text[len("SPARKY_ACTION:"):])
+                    data = json.loads(text[len("SPARK_ACTION:"):])
                     actions.append(RecordedAction(
                         action_type=data.get("type", "unknown"),
                         selector=data.get("selector", ""),
@@ -100,7 +100,7 @@ async def record_user_trajectory(
                     (el.id ? '#' + el.id : '') +
                     (el.className ? '.' + el.className.split(' ').join('.') : '');
                 const text = el.textContent?.trim().substring(0, 50) || '';
-                console.log('SPARKY_ACTION:' + JSON.stringify({
+                console.log('SPARK_ACTION:' + JSON.stringify({
                     type: 'click',
                     selector: selector,
                     description: 'Clicked ' + (text || selector)
@@ -112,7 +112,7 @@ async def record_user_trajectory(
                 const selector = el.tagName.toLowerCase() +
                     (el.id ? '#' + el.id : '') +
                     (el.name ? '[name=' + el.name + ']' : '');
-                console.log('SPARKY_ACTION:' + JSON.stringify({
+                console.log('SPARK_ACTION:' + JSON.stringify({
                     type: 'type',
                     selector: selector,
                     value: el.value,
@@ -123,7 +123,7 @@ async def record_user_trajectory(
             document.addEventListener('change', (e) => {
                 const el = e.target;
                 if (el.tagName === 'SELECT') {
-                    console.log('SPARKY_ACTION:' + JSON.stringify({
+                    console.log('SPARK_ACTION:' + JSON.stringify({
                         type: 'select',
                         selector: el.tagName.toLowerCase() + (el.id ? '#' + el.id : ''),
                         value: el.value,
@@ -205,7 +205,7 @@ Guidelines:
 
 async def record_and_generate_goal(
     base_url: str,
-    config: SparkyConfig,
+    config: SparkConfig,
 ) -> Path | None:
     """Record a user demonstration and generate a goal file.
 
@@ -232,7 +232,7 @@ async def record_and_generate_goal(
         return None
 
     # Generate a task name
-    from sparky_runner.decomposition import generate_task_name
+    from spark_runner.decomposition import generate_task_name
 
     task_name = generate_task_name(prompt, client, config.get_model("task_naming"))
 
@@ -250,7 +250,7 @@ async def record_and_generate_goal(
     config.tasks_dir.mkdir(parents=True, exist_ok=True)
     config.goal_summaries_dir.mkdir(parents=True, exist_ok=True)
 
-    from sparky_runner.storage import phase_name_to_slug, safe_write_path
+    from spark_runner.storage import phase_name_to_slug, safe_write_path
 
     for i, phase in enumerate(phases, 1):
         slug = phase_name_to_slug(phase.get("name", f"phase-{i}"))

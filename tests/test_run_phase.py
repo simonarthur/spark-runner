@@ -8,12 +8,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-import sparky_runner
+import spark_runner
 
-# The actual run_phase lives in sparky_runner.execution, so patches
+# The actual run_phase lives in spark_runner.execution, so patches
 # must target that module for Agent and extract_phase_history.
-_AGENT_PATCH = "sparky_runner.execution.Agent"
-_HISTORY_PATCH = "sparky_runner.execution.extract_phase_history"
+_AGENT_PATCH = "spark_runner.execution.Agent"
+_HISTORY_PATCH = "spark_runner.execution.extract_phase_history"
 
 
 def _make_history_item(error: str | None = None) -> MagicMock:
@@ -58,7 +58,7 @@ class TestRunPhase:
             mock_agent_instance = MockAgent.return_value
             mock_agent_instance.run = AsyncMock(return_value=agent_result)
 
-            success, result, screenshots = await sparky_runner.run_phase(
+            success, result, screenshots = await spark_runner.run_phase(
                 "Login", "Do login", MagicMock(), MagicMock(),
                 conversation_log, event_log, problem_log, tmp_path,
             )
@@ -84,7 +84,7 @@ class TestRunPhase:
             mock_agent_instance = MockAgent.return_value
             mock_agent_instance.run = AsyncMock(return_value=agent_result)
 
-            success, result, screenshots = await sparky_runner.run_phase(
+            success, result, screenshots = await spark_runner.run_phase(
                 "Search", "Search stuff", MagicMock(), mock_browser,
                 conversation_log, event_log, problem_log, tmp_path,
             )
@@ -107,7 +107,7 @@ class TestRunPhase:
             mock_agent_instance = MockAgent.return_value
             mock_agent_instance.run = AsyncMock(return_value=agent_result)
 
-            await sparky_runner.run_phase(
+            await spark_runner.run_phase(
                 "Fill", "Fill form", MagicMock(), MagicMock(),
                 conversation_log, event_log, problem_log, tmp_path,
             )
@@ -131,7 +131,7 @@ class TestRunPhase:
             mock_agent_instance = MockAgent.return_value
             mock_agent_instance.run = AsyncMock(return_value=agent_result)
 
-            await sparky_runner.run_phase(
+            await spark_runner.run_phase(
                 "Login Step", "Do login", MagicMock(), mock_browser,
                 conversation_log, event_log, problem_log, tmp_path,
             )
@@ -156,7 +156,7 @@ class TestRunPhase:
             mock_agent_instance = MockAgent.return_value
             mock_agent_instance.run = AsyncMock(return_value=agent_result)
 
-            success, result, screenshots = await sparky_runner.run_phase(
+            success, result, screenshots = await spark_runner.run_phase(
                 "Crash", "Do stuff", MagicMock(), mock_browser,
                 conversation_log, event_log, problem_log, tmp_path,
             )
@@ -183,7 +183,7 @@ class TestRunPhase:
             mock_agent_instance = MockAgent.return_value
             mock_agent_instance.run = AsyncMock(return_value=agent_result)
 
-            success, result, screenshots = await sparky_runner.run_phase(
+            success, result, screenshots = await spark_runner.run_phase(
                 "Stuck", "Do stuff", MagicMock(), mock_browser,
                 conversation_log, event_log, problem_log, tmp_path,
             )
@@ -209,7 +209,7 @@ class TestRunPhase:
             mock_agent_instance = MockAgent.return_value
             mock_agent_instance.run = AsyncMock(return_value=agent_result)
 
-            await sparky_runner.run_phase(
+            await spark_runner.run_phase(
                 "Search", "Find stuff", MagicMock(), mock_browser,
                 conversation_log, event_log, problem_log, tmp_path,
             )
@@ -241,7 +241,7 @@ class TestRunPhase:
             mock_agent_instance = MockAgent.return_value
             mock_agent_instance.run = AsyncMock(return_value=agent_result)
 
-            success, result, screenshots = await sparky_runner.run_phase(
+            success, result, screenshots = await spark_runner.run_phase(
                 "Login", "Do login", MagicMock(), MagicMock(),
                 conversation_log, event_log, problem_log, tmp_path,
             )
@@ -278,7 +278,7 @@ class TestRunPhase:
             mock_agent_instance = MockAgent.return_value
             mock_agent_instance.run = AsyncMock(return_value=agent_result)
 
-            success, result, screenshots = await sparky_runner.run_phase(
+            success, result, screenshots = await spark_runner.run_phase(
                 "Fill", "Fill form", MagicMock(), MagicMock(),
                 conversation_log, event_log, problem_log, tmp_path,
             )

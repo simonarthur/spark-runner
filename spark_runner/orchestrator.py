@@ -12,28 +12,28 @@ import anthropic
 from browser_use import Browser, ChatBrowserUse
 from browser_use.agent.views import AgentHistoryList
 
-from sparky_runner.classification import classify_observations
-from sparky_runner.decomposition import decompose_task, generate_task_name
-from sparky_runner.execution import build_augmented_task, run_phase
-from sparky_runner.observation_routing import route_observations_to_phases
-from sparky_runner.goals import load_goal_summary
-from sparky_runner.knowledge import find_relevant_knowledge, load_knowledge_index
-from sparky_runner.log import log_event, log_problem
-from sparky_runner.models import (
+from spark_runner.classification import classify_observations
+from spark_runner.decomposition import decompose_task, generate_task_name
+from spark_runner.execution import build_augmented_task, run_phase
+from spark_runner.observation_routing import route_observations_to_phases
+from spark_runner.goals import load_goal_summary
+from spark_runner.knowledge import find_relevant_knowledge, load_knowledge_index
+from spark_runner.log import log_event, log_problem
+from spark_runner.models import (
     CredentialProfile,
     ModelConfig,
     PhaseResult,
     RunResult,
     ScreenshotRecord,
-    SparkyConfig,
+    SparkConfig,
     TaskSpec,
 )
-from sparky_runner.observations import _extract_and_log_observations, merge_observations
-from sparky_runner.placeholders import restore_from_storage, sanitize_for_storage
-from sparky_runner.report import generate_report
-from sparky_runner.results import write_run_metadata
-from sparky_runner.storage import make_run_dir, phase_name_to_slug, safe_write_path
-from sparky_runner.summarization import (
+from spark_runner.observations import _extract_and_log_observations, merge_observations
+from spark_runner.placeholders import restore_from_storage, sanitize_for_storage
+from spark_runner.report import generate_report
+from spark_runner.results import write_run_metadata
+from spark_runner.storage import make_run_dir, phase_name_to_slug, safe_write_path
+from spark_runner.summarization import (
     generate_task_report,
     summarize_phase,
 )
@@ -68,7 +68,7 @@ def format_knowledge_match(knowledge_match: dict[str, Any]) -> list[str]:
     return lines
 
 
-def _make_restore_fn(config: SparkyConfig) -> Any:
+def _make_restore_fn(config: SparkConfig) -> Any:
     """Create a restore_from_storage closure using config credentials."""
     cred: CredentialProfile = config.active_credentials
     def _restore(text: str) -> str:
@@ -76,7 +76,7 @@ def _make_restore_fn(config: SparkyConfig) -> Any:
     return _restore
 
 
-def _make_sanitize_fn(config: SparkyConfig) -> Any:
+def _make_sanitize_fn(config: SparkConfig) -> Any:
     """Create a sanitize_for_storage closure using config credentials."""
     cred: CredentialProfile = config.active_credentials
     def _sanitize(text: str) -> str:
@@ -86,7 +86,7 @@ def _make_sanitize_fn(config: SparkyConfig) -> Any:
 
 async def run_single(
     task: TaskSpec,
-    config: SparkyConfig,
+    config: SparkConfig,
     client: anthropic.Anthropic | None = None,
     browser: Browser | None = None,
 ) -> RunResult:
@@ -431,7 +431,7 @@ async def run_single(
 
 async def run_multiple(
     tasks: list[TaskSpec],
-    config: SparkyConfig,
+    config: SparkConfig,
     shared_session: bool = False,
     parallel: int = 1,
 ) -> list[RunResult]:

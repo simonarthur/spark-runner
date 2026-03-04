@@ -1,4 +1,4 @@
-"""Pytest plugin for sparky_runner: fixtures, markers, and configuration."""
+"""Pytest plugin for spark_runner: fixtures, markers, and configuration."""
 
 from __future__ import annotations
 
@@ -8,27 +8,27 @@ from typing import Any, Generator
 
 import pytest
 
-from sparky_runner.models import RunResult, SparkyConfig, TaskSpec
+from spark_runner.models import RunResult, SparkConfig, TaskSpec
 
 
 def pytest_configure(config: Any) -> None:
     """Register custom markers."""
-    config.addinivalue_line("markers", "sparky_goal(path): run a saved goal file")
-    config.addinivalue_line("markers", "sparky_prompt(text): run a prompt-based task")
+    config.addinivalue_line("markers", "spark_goal(path): run a saved goal file")
+    config.addinivalue_line("markers", "spark_prompt(text): run a prompt-based task")
 
 
 @pytest.fixture
-def sparky_config(request: pytest.FixtureRequest, tmp_path: Path) -> SparkyConfig:
-    """Configuration for sparky_runner tests.
+def spark_config(request: pytest.FixtureRequest, tmp_path: Path) -> SparkConfig:
+    """Configuration for spark_runner tests.
 
     Defaults to a temporary data directory. Can be overridden via
-    ``pyproject.toml`` under ``[tool.sparky_runner]``.
+    ``pyproject.toml`` under ``[tool.spark_runner]``.
     """
     # Check for pyproject.toml config
     ini_config = request.config.inicfg or {}
     tool_config: dict[str, Any] = {}
 
-    # Try to read from pyproject.toml [tool.sparky_runner] section
+    # Try to read from pyproject.toml [tool.spark_runner] section
     rootdir = request.config.rootpath
     pyproject = rootdir / "pyproject.toml"
     if pyproject.exists():
@@ -43,15 +43,15 @@ def sparky_config(request: pytest.FixtureRequest, tmp_path: Path) -> SparkyConfi
             try:
                 with open(pyproject, "rb") as f:
                     data = tomllib.load(f)
-                tool_config = data.get("tool", {}).get("sparky_runner", {})
+                tool_config = data.get("tool", {}).get("spark_runner", {})
             except Exception:
                 pass
 
-    data_dir = Path(tool_config.get("data_dir", str(tmp_path / "sparky_runner")))
+    data_dir = Path(tool_config.get("data_dir", str(tmp_path / "spark_runner")))
     if not data_dir.is_absolute():
         data_dir = rootdir / data_dir
 
-    config = SparkyConfig(
+    config = SparkConfig(
         data_dir=data_dir,
         base_url=tool_config.get("base_url", "https://sparky-web-dev.vercel.app"),
         active_credential_profile=tool_config.get("credential_profile", "default"),
@@ -65,45 +65,45 @@ def sparky_config(request: pytest.FixtureRequest, tmp_path: Path) -> SparkyConfi
 
 
 @pytest.fixture
-async def sparky_runner(sparky_config: SparkyConfig) -> Any:
+async def spark_runner(spark_config: SparkConfig) -> Any:
     """Configured runner instance for tests.
 
     Returns an object with an ``execute`` method for running tasks.
     """
-    return SparkyTestRunner(sparky_config)
+    return SparkTestRunner(spark_config)
 
 
 @pytest.fixture
-async def sparky_result(
-    request: pytest.FixtureRequest, sparky_runner: Any
+async def spark_result(
+    request: pytest.FixtureRequest, spark_runner: Any
 ) -> RunResult:
     """Auto-runs the goal/prompt from marker and returns the result.
 
-    Use with ``@pytest.mark.sparky_goal(...)`` or ``@pytest.mark.sparky_prompt(...)``.
+    Use with ``@pytest.mark.spark_goal(...)`` or ``@pytest.mark.spark_prompt(...)``.
     """
-    # Check for sparky_goal marker
-    goal_marker = request.node.get_closest_marker("sparky_goal")
+    # Check for spark_goal marker
+    goal_marker = request.node.get_closest_marker("spark_goal")
     if goal_marker:
         goal_path = Path(goal_marker.args[0])
         if not goal_path.is_absolute():
             goal_path = request.config.rootpath / goal_path
-        return await sparky_runner.execute(goal_path=goal_path)
+        return await spark_runner.execute(goal_path=goal_path)
 
-    # Check for sparky_prompt marker
-    prompt_marker = request.node.get_closest_marker("sparky_prompt")
+    # Check for spark_prompt marker
+    prompt_marker = request.node.get_closest_marker("spark_prompt")
     if prompt_marker:
-        return await sparky_runner.execute(prompt=prompt_marker.args[0])
+        return await spark_runner.execute(prompt=prompt_marker.args[0])
 
     pytest.fail(
-        "sparky_result fixture requires either "
-        "@pytest.mark.sparky_goal or @pytest.mark.sparky_prompt marker"
+        "spark_result fixture requires either "
+        "@pytest.mark.spark_goal or @pytest.mark.spark_prompt marker"
     )
 
 
-class SparkyTestRunner:
-    """Test-friendly wrapper around the sparky_runner orchestrator."""
+class SparkTestRunner:
+    """Test-friendly wrapper around the spark_runner orchestrator."""
 
-    def __init__(self, config: SparkyConfig) -> None:
+    def __init__(self, config: SparkConfig) -> None:
         self.config = config
 
     async def execute(
@@ -122,7 +122,7 @@ class SparkyTestRunner:
         Returns:
             A ``RunResult`` with phase outcomes and screenshots.
         """
-        from sparky_runner.orchestrator import run_single
+        from spark_runner.orchestrator import run_single
 
         task = TaskSpec(
             prompt=prompt,

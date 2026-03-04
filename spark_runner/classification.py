@@ -9,7 +9,7 @@ from typing import Any
 
 import anthropic
 
-from sparky_runner.models import ClassificationRules, ModelConfig
+from spark_runner.models import ClassificationRules, ModelConfig
 
 
 def load_classification_rules(path: Path) -> ClassificationRules:

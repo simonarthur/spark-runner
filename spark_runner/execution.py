@@ -10,11 +10,11 @@ from typing import Any, Callable
 from browser_use import Agent, Browser, ChatBrowserUse
 from browser_use.agent.views import AgentHistoryList
 
-from sparky_runner.classification import _observation_text
-from sparky_runner.log import log_event, log_problem
-from sparky_runner.models import ScreenshotRecord
-from sparky_runner.storage import phase_name_to_slug
-from sparky_runner.summarization import extract_phase_history
+from spark_runner.classification import _observation_text
+from spark_runner.log import log_event, log_problem
+from spark_runner.models import ScreenshotRecord
+from spark_runner.storage import phase_name_to_slug
+from spark_runner.summarization import extract_phase_history
 
 
 _PHASE_RULES: str = (

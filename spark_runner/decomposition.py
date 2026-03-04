@@ -9,7 +9,7 @@ from typing import Any, Callable
 
 import anthropic
 
-from sparky_runner.models import ModelConfig
+from spark_runner.models import ModelConfig
 
 
 def generate_task_name(

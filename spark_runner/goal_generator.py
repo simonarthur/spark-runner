@@ -11,7 +11,7 @@ from typing import Any
 
 import anthropic
 
-from sparky_runner.models import ModelConfig, SparkyConfig
+from spark_runner.models import ModelConfig, SparkConfig
 
 
 @dataclass
@@ -224,7 +224,7 @@ Return ONLY valid JSON with this structure:
 async def generate_goals_from_source(
     source_path: Path,
     output_dir: Path,
-    config: SparkyConfig,
+    config: SparkConfig,
     branch: str = "main",
 ) -> list[Path]:
     """End-to-end: scan source, extract features, generate goals.
@@ -279,7 +279,7 @@ def clone_and_scan_repo(repo_url: str, branch: str = "main") -> Path:
     import subprocess
     import tempfile
 
-    tmpdir = Path(tempfile.mkdtemp(prefix="sparky_goals_"))
+    tmpdir = Path(tempfile.mkdtemp(prefix="spark_goals_"))
     print(f"  Cloning {repo_url} (branch: {branch}) to {tmpdir}...")
     subprocess.run(
         ["git", "clone", "--depth=1", f"--branch={branch}", repo_url, str(tmpdir)],

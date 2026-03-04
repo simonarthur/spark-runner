@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 from typing import Any
 
-from sparky_runner.models import CredentialProfile, ModelConfig, SparkyConfig
+from spark_runner.models import CredentialProfile, ModelConfig, SparkConfig
 
 
 def _resolve_path(p: str | Path) -> Path:
@@ -76,19 +76,19 @@ def build_config(
     update_summary: bool = True,
     update_tasks: bool = True,
     knowledge_reuse: bool = True,
-) -> SparkyConfig:
-    """Build a ``SparkyConfig`` by merging YAML file, env vars, and CLI args.
+) -> SparkConfig:
+    """Build a ``SparkConfig`` by merging YAML file, env vars, and CLI args.
 
     Priority: CLI args > YAML file > environment variables > defaults.
     """
     # Determine config file location
     if config_path is None:
-        env_config = os.environ.get("SPARKY_CONFIG")
+        env_config = os.environ.get("SPARK_CONFIG")
         if env_config:
             config_path = _resolve_path(env_config)
         else:
             default_data_dir = _resolve_path(
-                data_dir or os.environ.get("SPARKY_DATA_DIR", "~/sparky_runner")
+                data_dir or os.environ.get("SPARK_DATA_DIR", "~/spark_runner")
             )
             config_path = default_data_dir / "config.yaml"
 
@@ -99,19 +99,19 @@ def build_config(
     resolved_data_dir: Path
     if data_dir is not None:
         resolved_data_dir = _resolve_path(data_dir)
-    elif os.environ.get("SPARKY_DATA_DIR"):
-        resolved_data_dir = _resolve_path(os.environ["SPARKY_DATA_DIR"])
+    elif os.environ.get("SPARK_DATA_DIR"):
+        resolved_data_dir = _resolve_path(os.environ["SPARK_DATA_DIR"])
     elif general.get("data_dir"):
         resolved_data_dir = _resolve_path(general["data_dir"])
     else:
-        resolved_data_dir = _resolve_path("~/sparky_runner")
+        resolved_data_dir = _resolve_path("~/spark_runner")
 
     # Base URL
     resolved_base_url: str
     if base_url is not None:
         resolved_base_url = base_url
-    elif os.environ.get("SPARKY_BASE_URL"):
-        resolved_base_url = os.environ["SPARKY_BASE_URL"]
+    elif os.environ.get("SPARK_BASE_URL"):
+        resolved_base_url = os.environ["SPARK_BASE_URL"]
     elif general.get("base_url"):
         resolved_base_url = general["base_url"]
     else:
@@ -148,7 +148,7 @@ def build_config(
             else:
                 models[purpose] = ModelConfig(model=model_id)
 
-    config = SparkyConfig(
+    config = SparkConfig(
         data_dir=resolved_data_dir,
         tasks_dir=resolved_data_dir / "tasks",
         goal_summaries_dir=resolved_data_dir / "goal_summaries",

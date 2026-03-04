@@ -3,9 +3,9 @@ requires = ["setuptools>=64"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "sparky-runner"
+name = "spark-runner"
 version = "0.1.0"
-description = "SparkyAI Browser Automation Runner"
+description = "Spark Runner – Browser Automation"
 requires-python = ">=3.11"
 dependencies = [
     "anthropic",
@@ -16,13 +16,13 @@ dependencies = [
 ]
 
 [tool.setuptools.packages.find]
-include = ["sparky_runner*"]
+include = ["spark_runner*"]
 
 [project.scripts]
-sparky-runner = "sparky_runner.cli:cli"
+spark-runner = "spark_runner.cli:cli"
 
 [project.entry-points."pytest11"]
-sparky_runner = "sparky_runner.pytest_plugin"
+spark_runner = "spark_runner.pytest_plugin"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

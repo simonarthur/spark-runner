@@ -1,4 +1,4 @@
-"""Tests for sparky_runner.config: YAML loading, defaults, env var and CLI overrides."""
+"""Tests for spark_runner.config: YAML loading, defaults, env var and CLI overrides."""
 
 from __future__ import annotations
 
@@ -8,8 +8,8 @@ from unittest.mock import patch
 
 import pytest
 
-from sparky_runner.config import build_config, load_config_from_yaml
-from sparky_runner.models import SparkyConfig
+from spark_runner.config import build_config, load_config_from_yaml
+from spark_runner.models import SparkConfig
 
 
 # ── load_config_from_yaml ────────────────────────────────────────────────
@@ -55,9 +55,9 @@ class TestLoadConfigFromYaml:
 
 
 class TestBuildConfigDefaults:
-    def test_returns_sparky_config_instance(self, tmp_path: Path) -> None:
+    def test_returns_spark_config_instance(self, tmp_path: Path) -> None:
         config = build_config(data_dir=tmp_path)
-        assert isinstance(config, SparkyConfig)
+        assert isinstance(config, SparkConfig)
 
     def test_default_base_url_is_set(self, tmp_path: Path) -> None:
         config = build_config(data_dir=tmp_path)
@@ -148,20 +148,20 @@ class TestBuildConfigFromYaml:
 
 
 class TestBuildConfigEnvVarOverrides:
-    def test_sparky_base_url_env_overrides_yaml(
+    def test_spark_base_url_env_overrides_yaml(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         config_file = tmp_path / "config.yaml"
         config_file.write_text("general:\n  base_url: https://yaml.example.com\n")
-        monkeypatch.setenv("SPARKY_BASE_URL", "https://env.example.com")
+        monkeypatch.setenv("SPARK_BASE_URL", "https://env.example.com")
         config = build_config(config_path=config_file, data_dir=tmp_path)
         assert config.base_url == "https://env.example.com"
 
-    def test_sparky_data_dir_env_sets_data_dir(
+    def test_spark_data_dir_env_sets_data_dir(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         env_data_dir = tmp_path / "env_data"
-        monkeypatch.setenv("SPARKY_DATA_DIR", str(env_data_dir))
+        monkeypatch.setenv("SPARK_DATA_DIR", str(env_data_dir))
         config = build_config()
         assert config.data_dir == env_data_dir
 
@@ -174,12 +174,12 @@ class TestBuildConfigEnvVarOverrides:
         assert config.credentials["default"].email == "env@example.com"
         assert config.credentials["default"].password == "envpass"
 
-    def test_sparky_config_env_sets_config_path(
+    def test_spark_config_env_sets_config_path(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         config_file = tmp_path / "env_config.yaml"
         config_file.write_text("general:\n  base_url: https://fromenv.example.com\n")
-        monkeypatch.setenv("SPARKY_CONFIG", str(config_file))
+        monkeypatch.setenv("SPARK_CONFIG", str(config_file))
         config = build_config(data_dir=tmp_path)
         assert config.base_url == "https://fromenv.example.com"
 
@@ -191,7 +191,7 @@ class TestBuildConfigCliOverrides:
     def test_base_url_arg_overrides_env(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setenv("SPARKY_BASE_URL", "https://env.example.com")
+        monkeypatch.setenv("SPARK_BASE_URL", "https://env.example.com")
         config = build_config(data_dir=tmp_path, base_url="https://cli.example.com")
         assert config.base_url == "https://cli.example.com"
 

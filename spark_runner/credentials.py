@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from sparky_runner.models import CredentialProfile, SparkyConfig
+from spark_runner.models import CredentialProfile, SparkConfig
 
 
-def get_credentials(config: SparkyConfig) -> CredentialProfile:
+def get_credentials(config: SparkConfig) -> CredentialProfile:
     """Return the active credential profile from the config.
 
     Args:
@@ -17,7 +17,7 @@ def get_credentials(config: SparkyConfig) -> CredentialProfile:
     return config.active_credentials
 
 
-def list_credential_profiles(config: SparkyConfig) -> list[str]:
+def list_credential_profiles(config: SparkConfig) -> list[str]:
     """Return the names of all configured credential profiles.
 
     Args:
@@ -29,7 +29,7 @@ def list_credential_profiles(config: SparkyConfig) -> list[str]:
     return sorted(config.credentials.keys())
 
 
-def switch_profile(config: SparkyConfig, profile_name: str) -> SparkyConfig:
+def switch_profile(config: SparkConfig, profile_name: str) -> SparkConfig:
     """Return a new config with the active profile switched.
 
     Args:
@@ -37,7 +37,7 @@ def switch_profile(config: SparkyConfig, profile_name: str) -> SparkyConfig:
         profile_name: Name of the profile to switch to.
 
     Returns:
-        A new ``SparkyConfig`` with the updated active profile.
+        A new ``SparkConfig`` with the updated active profile.
 
     Raises:
         KeyError: If the profile name doesn't exist.

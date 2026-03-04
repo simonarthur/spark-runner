@@ -6,7 +6,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from sparky_runner.models import ScreenshotRecord
+from spark_runner.models import ScreenshotRecord
 
 
 def make_screenshots_dir(run_dir: Path) -> Path:

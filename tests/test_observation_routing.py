@@ -7,7 +7,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-import sparky_runner
+import spark_runner
 from tests.conftest import make_llm_response
 
 
@@ -15,13 +15,13 @@ class TestRouteObservationsToPhases:
     """Tests for route_observations_to_phases."""
 
     def test_empty_observations_returns_empty(self) -> None:
-        result = sparky_runner.route_observations_to_phases(
+        result = spark_runner.route_observations_to_phases(
             [], [{"name": "Login", "task": "Log in"}]
         )
         assert result == {}
 
     def test_empty_phases_returns_empty(self) -> None:
-        result = sparky_runner.route_observations_to_phases(
+        result = spark_runner.route_observations_to_phases(
             ["some observation"], []
         )
         assert result == {}
@@ -40,7 +40,7 @@ class TestRouteObservationsToPhases:
             {"name": "Create Campaign", "task": "Fill out campaign form"},
         ]
 
-        result = sparky_runner.route_observations_to_phases(observations, phases)
+        result = spark_runner.route_observations_to_phases(observations, phases)
         assert result["Login"] == ["Login requires MFA"]
         assert result["Create Campaign"] == ["Step 2 needs checkbox selection"]
 
@@ -58,7 +58,7 @@ class TestRouteObservationsToPhases:
             {"name": "Submit Form", "task": "Submit the form"},
         ]
 
-        result = sparky_runner.route_observations_to_phases(observations, phases)
+        result = spark_runner.route_observations_to_phases(observations, phases)
         assert result["Login"] == ["Error toasts appear at top-right"]
         assert result["Submit Form"] == ["Error toasts appear at top-right"]
 
@@ -77,7 +77,7 @@ class TestRouteObservationsToPhases:
             {"name": "Navigate", "task": "Go to dashboard"},
         ]
 
-        result = sparky_runner.route_observations_to_phases(observations, phases)
+        result = spark_runner.route_observations_to_phases(observations, phases)
         assert result == {"Login": ["Login tip"]}
         assert "Navigate" not in result
 
@@ -94,7 +94,7 @@ class TestRouteObservationsToPhases:
             {"name": "Navigate", "task": "Go to dashboard"},
         ]
 
-        result = sparky_runner.route_observations_to_phases(observations, phases)
+        result = spark_runner.route_observations_to_phases(observations, phases)
         # Fallback: all observations go to all phases
         assert result["Login"] == ["obs1", "obs2"]
         assert result["Navigate"] == ["obs1", "obs2"]
@@ -116,7 +116,7 @@ class TestRouteObservationsToPhases:
             {"name": "Fill Form", "task": "Fill out form"},
         ]
 
-        result = sparky_runner.route_observations_to_phases(observations, phases)
+        result = spark_runner.route_observations_to_phases(observations, phases)
         assert result["Login"] == [{"text": "Login needs MFA", "severity": "error"}]
         assert result["Fill Form"] == [{"text": "Form has date picker", "severity": "warning"}]
 
@@ -134,6 +134,6 @@ class TestRouteObservationsToPhases:
             {"name": "Generate", "task": "Generate content"},
         ]
 
-        result = sparky_runner.route_observations_to_phases(observations, phases)
+        result = spark_runner.route_observations_to_phases(observations, phases)
         assert "Login" not in result
         assert result["Generate"] == ["Use polling for generation"]
