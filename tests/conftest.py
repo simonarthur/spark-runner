@@ -36,11 +36,20 @@ def make_llm_response(text: str) -> MagicMock:
 # ── Autouse fixture: isolate module globals every test ───────────────────
 
 @pytest.fixture(autouse=True)
-def _patch_globals(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Ensure HOST / USER_EMAIL / USER_PASSWORD are deterministic for every test."""
+def _patch_globals(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Isolate every test from the user's real environment.
+
+    - Module globals get deterministic values.
+    - Environment variables that influence config resolution
+      (``SPARK_RUNNER_DATA_DIR``, ``SPARK_CONFIG``) are cleared so tests
+      never pick up the developer's local settings.
+    """
     monkeypatch.setattr(spark_runner, "HOST", "https://test.example.com")
     monkeypatch.setattr(spark_runner, "USER_EMAIL", "test@example.com")
     monkeypatch.setattr(spark_runner, "USER_PASSWORD", "test-password-123")
+    monkeypatch.delenv("SPARK_RUNNER_DATA_DIR", raising=False)
+    monkeypatch.delenv("SPARK_CONFIG", raising=False)
+    monkeypatch.delenv("SPARK_BASE_URL", raising=False)
 
 
 # ── Filesystem isolation fixtures ────────────────────────────────────────
