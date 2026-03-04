@@ -348,7 +348,7 @@ def _generate_index_page(
 
     # Pipeline timeline (new)
     if detail.pipeline:
-        timeline = _render_pipeline_timeline(detail.pipeline)
+        timeline = _render_pipeline_timeline(detail.pipeline, detail)
     else:
         # Fallback for old runs without pipeline.json
         timeline = _render_fallback_phase_table(detail, ss_map)
@@ -360,7 +360,7 @@ def _generate_index_page(
     return _page(f"Report: {detail.task_name}", nav_html, body)
 
 
-def _render_pipeline_timeline(pipeline: list[dict[str, Any]]) -> str:
+def _render_pipeline_timeline(pipeline: list[dict[str, Any]], detail: RunDetail | None = None) -> str:
     """Render pipeline steps as a vertical timeline."""
     steps_html: list[str] = []
     for i, step in enumerate(pipeline, 1):
@@ -375,6 +375,14 @@ def _render_pipeline_timeline(pipeline: list[dict[str, Any]]) -> str:
         conv_file = step.get("conversation_file")
         if conv_file:
             links.append(f'<a href="pipeline.html#{_html_escape(conv_file)}">view conversation</a>')
+
+        # Link phase execution steps to the Conversations page
+        if step.get("step_type") == "phase_execution" and detail is not None:
+            phase_slug = step.get("phase_slug", "")
+            for pi, p in enumerate(detail.phases, 1):
+                if phase_name_to_slug(p.name) == phase_slug:
+                    links.append(f'<a href="conversations.html#phase-{pi}">agent conversation</a>')
+                    break
 
         links_html = f'<div class="step-links">{" ".join(links)}</div>' if links else ""
 
@@ -552,7 +560,7 @@ def _generate_conversations_page(run_dir: Path, detail: RunDetail) -> str:
             turns = _parse_json_conversation(cf)
 
         sections.append(
-            f"<h2>{_html_escape(phase_label)}</h2>\n"
+            f'<h2 id="phase-{idx + 1}">{_html_escape(phase_label)}</h2>\n'
             f"<p><em>File: {_html_escape(cf.name)}</em></p>\n"
             + "\n".join(turns)
         )
@@ -604,10 +612,8 @@ def _generate_pipeline_page(run_dir: Path, detail: RunDetail) -> str:
         for msg in messages:
             role = msg.get("role", "unknown")
             content = msg.get("content", "")
-            if isinstance(content, str) and len(content) > 10_000:
-                content = content[:10_000] + "\n... (truncated)"
-            elif not isinstance(content, str):
-                content = json.dumps(content, indent=2)[:10_000]
+            if not isinstance(content, str):
+                content = json.dumps(content, indent=2)
             role_cls = f"msg-{role}" if role in ("user", "assistant", "system") else "msg-system"
             prompt_parts.append(
                 f'<details><summary><span class="msg-role">{_html_escape(role)}</span></summary>'
@@ -616,8 +622,6 @@ def _generate_pipeline_page(run_dir: Path, detail: RunDetail) -> str:
 
         # Render response
         response_text = data.get("response_text", "")
-        if len(response_text) > 10_000:
-            response_text = response_text[:10_000] + "\n... (truncated)"
 
         response_html = (
             f'<details open><summary><span class="msg-role">response</span></summary>'
@@ -861,9 +865,6 @@ def _parse_txt_conversation(path: Path) -> list[str]:
         i += 2
         turn_num += 1
 
-        if len(content) > 10_000:
-            content = content[:10_000] + "\n... (truncated)"
-
         role_cls = f"msg-{role}" if role in ("user", "assistant", "system", "tool") else "msg-system"
         turns.append(
             f'<details><summary><span class="msg-role">{_html_escape(role)}</span> '
@@ -873,10 +874,7 @@ def _parse_txt_conversation(path: Path) -> list[str]:
 
     if not turns:
         # Fall back: show the whole file as a single block
-        content = raw
-        if len(content) > 10_000:
-            content = content[:10_000] + "\n... (truncated)"
-        turns.append(f"<pre>{_html_escape(content)}</pre>")
+        turns.append(f"<pre>{_html_escape(raw)}</pre>")
 
     return turns
 
@@ -894,8 +892,6 @@ def _parse_json_conversation(path: Path) -> list[str]:
     for mi, msg in enumerate(messages):
         role = msg.get("role", "unknown")
         content = _extract_message_content(msg)
-        if len(content) > 10_000:
-            content = content[:10_000] + "\n... (truncated)"
         role_cls = f"msg-{role}" if role in ("user", "assistant", "system", "tool") else "msg-system"
         turns.append(
             f'<details><summary><span class="msg-role">{_html_escape(role)}</span> '

@@ -250,7 +250,7 @@ class TestGenerateReport:
         assert "Please log in" in conv_html
         assert "Search for items" in conv_html
 
-    def test_conversations_truncates_long_messages(self, tmp_path: Path) -> None:
+    def test_conversations_includes_full_long_messages(self, tmp_path: Path) -> None:
         long_msg = "x" * 15_000
         run_dir = _make_run_dir(
             tmp_path,
@@ -261,9 +261,9 @@ class TestGenerateReport:
         generate_report(run_dir)
         conv_html = (run_dir / "report" / "conversations.html").read_text()
 
-        assert "truncated" in conv_html.lower()
-        # The full 15k string should NOT appear
-        assert long_msg not in conv_html
+        # Full content should be present (no truncation in HTML report)
+        assert _html_escape(long_msg) in conv_html
+        assert "truncated" not in conv_html.lower()
 
     def test_handles_missing_metadata(self, tmp_path: Path) -> None:
         """Report generation should not crash on a bare run directory."""
@@ -323,7 +323,7 @@ class TestGenerateReport:
         assert "Step 2" in conv_html
         assert "Search result" in conv_html
 
-    def test_txt_conversations_truncates_long_messages(self, tmp_path: Path) -> None:
+    def test_txt_conversations_includes_full_long_messages(self, tmp_path: Path) -> None:
         long_body = "x" * 15_000
         run_dir = _make_run_dir(
             tmp_path,
@@ -334,8 +334,9 @@ class TestGenerateReport:
         generate_report(run_dir)
         conv_html = (run_dir / "report" / "conversations.html").read_text()
 
-        assert "truncated" in conv_html.lower()
-        assert long_body not in conv_html
+        # Full content should be present (no truncation in HTML report)
+        assert long_body in conv_html
+        assert "truncated" not in conv_html.lower()
 
     def test_txt_preferred_over_json(self, tmp_path: Path) -> None:
         """When both .txt and .json files exist, .txt should be used."""
@@ -519,6 +520,102 @@ class TestPipelineRendering:
         nav_html = _nav("index.html", has_problems=True)
         assert "pipeline.html" in nav_html
         assert "Pipeline" in nav_html
+
+    def test_pipeline_page_no_truncation(self, tmp_path: Path) -> None:
+        """Pipeline page should show full content without truncation."""
+        long_prompt = "y" * 15_000
+        long_response = "z" * 15_000
+        llm_data = {
+            "step": "test_step",
+            "model": "test-model",
+            "timestamp": "2026-03-04T10:00:00Z",
+            "messages": [{"role": "user", "content": long_prompt}],
+            "response_text": long_response,
+            "stop_reason": "end_turn",
+            "input_tokens": 100,
+            "output_tokens": 200,
+        }
+        run_dir = _make_run_dir(
+            tmp_path,
+            llm_files={"llm_test_step.json": llm_data},
+        )
+        generate_report(run_dir)
+        pipeline_html = (run_dir / "report" / "pipeline.html").read_text()
+
+        assert _html_escape(long_prompt) in pipeline_html
+        assert _html_escape(long_response) in pipeline_html
+        assert "truncated" not in pipeline_html.lower()
+
+    def test_phases_loaded_step_in_timeline(self, tmp_path: Path) -> None:
+        """When phases are loaded from goal file, pipeline shows 'Phases Loaded'."""
+        pipeline = [
+            {
+                "name": "Goal Source",
+                "step_type": "goal_source",
+                "status": "completed",
+                "summary": "Goal file: my-goal.json",
+                "conversation_file": None,
+            },
+            {
+                "name": "Phases Loaded",
+                "step_type": "phases_loaded",
+                "status": "completed",
+                "summary": "3 phases from goal file",
+                "conversation_file": None,
+            },
+        ]
+        run_dir = _make_run_dir(
+            tmp_path,
+            phases=[{"name": "Login", "outcome": "SUCCESS", "screenshots": []}],
+            pipeline=pipeline,
+        )
+        generate_report(run_dir)
+        index_html = (run_dir / "report" / "index.html").read_text()
+
+        assert "Phases Loaded" in index_html
+        assert "3 phases from goal file" in index_html
+
+    def test_phase_execution_links_to_conversations(self, tmp_path: Path) -> None:
+        """Phase execution steps should link to the conversations page."""
+        pipeline = [
+            {
+                "name": "Phase: Login",
+                "step_type": "phase_execution",
+                "status": "completed",
+                "summary": "SUCCESS",
+                "conversation_file": None,
+                "phase_slug": "login",
+            },
+        ]
+        run_dir = _make_run_dir(
+            tmp_path,
+            phases=[{"name": "Login", "outcome": "SUCCESS", "screenshots": []}],
+            pipeline=pipeline,
+        )
+        generate_report(run_dir)
+        index_html = (run_dir / "report" / "index.html").read_text()
+
+        assert 'conversations.html#phase-1' in index_html
+        assert "agent conversation" in index_html
+
+    def test_conversations_page_has_anchor_ids(self, tmp_path: Path) -> None:
+        """Conversations page headings should have anchor IDs for linking."""
+        run_dir = _make_run_dir(
+            tmp_path,
+            phases=[
+                {"name": "Login", "outcome": "SUCCESS", "screenshots": []},
+                {"name": "Search", "outcome": "SUCCESS", "screenshots": []},
+            ],
+            conversation_files={
+                "conversation_aaaa_1.txt": " user \nHello\n assistant \nHi",
+                "conversation_bbbb_1.txt": " user \nSearch\n assistant \nResults",
+            },
+        )
+        generate_report(run_dir)
+        conv_html = (run_dir / "report" / "conversations.html").read_text()
+
+        assert 'id="phase-1"' in conv_html
+        assert 'id="phase-2"' in conv_html
 
 
 class TestHtmlEscape:

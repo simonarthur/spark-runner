@@ -251,13 +251,22 @@ async def run_single(
             knowledge_match=knowledge_match,
             run_dir=run_dir,
         )
-    pipeline_steps.append({
-        "name": "Task Decomposition",
-        "step_type": "task_decomposition",
-        "status": "completed",
-        "summary": f"{len(phases)} phases planned",
-        "conversation_file": "llm_task_decomposition.json" if (run_dir / "llm_task_decomposition.json").exists() else None,
-    })
+    if (run_dir / "llm_task_decomposition.json").exists():
+        pipeline_steps.append({
+            "name": "Task Decomposition",
+            "step_type": "task_decomposition",
+            "status": "completed",
+            "summary": f"{len(phases)} phases planned",
+            "conversation_file": "llm_task_decomposition.json",
+        })
+    else:
+        pipeline_steps.append({
+            "name": "Phases Loaded",
+            "step_type": "phases_loaded",
+            "status": "completed",
+            "summary": f"{len(phases)} phases from goal file",
+            "conversation_file": None,
+        })
 
     print(f"Planned {len(phases)} phases:")
     for i, p in enumerate(phases, 1):
@@ -339,12 +348,23 @@ async def run_single(
             )
             log_event(event_log, f"Task for '{phase['name']}':\n{augmented_task_truncated}")
 
+            # Snapshot conversation dir before phase execution
+            conv_dir = run_dir / "conversation_log.json"
+            pre_phase_files: set[Path] = set(conv_dir.iterdir()) if conv_dir.is_dir() else set()
+
             success: bool
             result: AgentHistoryList[Any]
             phase_screenshots: list[ScreenshotRecord]
             success, result, phase_screenshots = await run_phase(
                 phase["name"], augmented_task, llm, browser,
                 conversation_log, event_log, problem_log, run_dir,
+            )
+
+            # Find new conversation files added during this phase
+            post_phase_files: set[Path] = set(conv_dir.iterdir()) if conv_dir.is_dir() else set()
+            new_conv_files: list[Path] = sorted(post_phase_files - pre_phase_files)
+            phase_conv_file: str | None = (
+                str(new_conv_files[-1].relative_to(run_dir)) if new_conv_files else None
             )
             all_screenshots.extend(phase_screenshots)
 
@@ -389,7 +409,7 @@ async def run_single(
                 "step_type": "phase_execution",
                 "status": "completed" if success else "failed",
                 "summary": "SUCCESS" if success else "FAILED",
-                "conversation_file": None,
+                "conversation_file": phase_conv_file,
                 "phase_slug": phase_slug_for_step,
             })
             summarize_file = f"llm_summarize_{phase_slug_for_step}.json"
