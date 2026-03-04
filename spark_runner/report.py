@@ -156,11 +156,46 @@ details .detail-body {
 .msg-tool { background: #f3e8ff; }
 .msg-role { font-weight: 600; font-size: 0.85rem; text-transform: uppercase; color: var(--muted); }
 .green-ok { color: var(--success); font-weight: 600; }
+.pipeline-timeline { position: relative; padding-left: 3rem; margin: 1.5rem 0; }
+.pipeline-timeline::before {
+  content: '';
+  position: absolute;
+  left: 1.1rem;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--border);
+}
+.pipeline-step { position: relative; margin-bottom: 1.2rem; }
+.pipeline-step .step-marker {
+  position: absolute;
+  left: -2.9rem;
+  top: 0.1rem;
+  width: 1.6rem;
+  height: 1.6rem;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.75rem;
+  font-weight: 700;
+  z-index: 1;
+}
+.pipeline-step .step-marker.completed { background: var(--success); }
+.pipeline-step .step-marker.failed { background: var(--fail); }
+.pipeline-step .step-header { font-weight: 600; font-size: 1rem; }
+.pipeline-step .step-summary { color: var(--muted); font-size: 0.9rem; margin-top: 0.15rem; }
+.pipeline-step .step-links { margin-top: 0.25rem; font-size: 0.85rem; }
+.pipeline-step .step-links a { margin-right: 0.75rem; }
+.token-info { color: var(--muted); font-size: 0.82rem; }
 """
 
 
 _PAGE_NAMES: list[tuple[str, str]] = [
     ("index.html", "Overview"),
+    ("pipeline.html", "Pipeline"),
     ("phases.html", "Phases"),
     ("events.html", "Events"),
     ("problems.html", "Problems"),
@@ -293,9 +328,73 @@ def _generate_index_page(
     detail: RunDetail,
     ss_map: dict[str, list[ScreenshotRecord]],
 ) -> str:
-    """Generate the Overview / index page."""
+    """Generate the Overview / index page with pipeline timeline."""
     nav_html = _nav("index.html", _has_problems(run_dir))
 
+    # Compact metadata line
+    meta_parts: list[str] = []
+    if detail.base_url:
+        meta_parts.append(f"Target: {_html_escape(detail.base_url)}")
+    if detail.credential_profile:
+        meta_parts.append(f"Profile: {_html_escape(detail.credential_profile)}")
+    if detail.timestamp:
+        meta_parts.append(_html_escape(detail.timestamp))
+    meta_line = f'<p style="color:var(--muted)">{" | ".join(meta_parts)}</p>' if meta_parts else ""
+
+    if detail.prompt:
+        prompt_html = f"<p>{_html_escape(detail.prompt)}</p>"
+    else:
+        prompt_html = ""
+
+    # Pipeline timeline (new)
+    if detail.pipeline:
+        timeline = _render_pipeline_timeline(detail.pipeline)
+    else:
+        # Fallback for old runs without pipeline.json
+        timeline = _render_fallback_phase_table(detail, ss_map)
+
+    body = (
+        f"<h1>Run Report: {_html_escape(detail.task_name or '(unknown)')}</h1>\n"
+        f"{meta_line}\n{prompt_html}\n{timeline}"
+    )
+    return _page(f"Report: {detail.task_name}", nav_html, body)
+
+
+def _render_pipeline_timeline(pipeline: list[dict[str, Any]]) -> str:
+    """Render pipeline steps as a vertical timeline."""
+    steps_html: list[str] = []
+    for i, step in enumerate(pipeline, 1):
+        status = step.get("status", "completed")
+        marker_cls = "completed" if status == "completed" else "failed"
+        status_icon = "\u2713" if status == "completed" else "\u2717"
+
+        name = _html_escape(step.get("name", f"Step {i}"))
+        summary = _html_escape(step.get("summary", ""))
+
+        links: list[str] = []
+        conv_file = step.get("conversation_file")
+        if conv_file:
+            links.append(f'<a href="pipeline.html#{_html_escape(conv_file)}">view conversation</a>')
+
+        links_html = f'<div class="step-links">{" ".join(links)}</div>' if links else ""
+
+        steps_html.append(
+            f'<div class="pipeline-step">'
+            f'<div class="step-marker {marker_cls}">{status_icon}</div>'
+            f'<div class="step-header">{name}</div>'
+            f'<div class="step-summary">{summary}</div>'
+            f'{links_html}'
+            f'</div>'
+        )
+
+    return f'<h2>Pipeline</h2>\n<div class="pipeline-timeline">{"".join(steps_html)}</div>'
+
+
+def _render_fallback_phase_table(
+    detail: RunDetail,
+    ss_map: dict[str, list[ScreenshotRecord]],
+) -> str:
+    """Render the old-style metadata + phase table for runs without pipeline.json."""
     rows: list[str] = []
     meta_fields: list[tuple[str, str]] = [
         ("Task", detail.task_name or "(unknown)"),
@@ -309,8 +408,6 @@ def _generate_index_page(
         rows.append(f"<tr><th>{_html_escape(label)}</th><td>{_html_escape(value)}</td></tr>")
     meta_table = f"<table>{''.join(rows)}</table>"
 
-    # Phase summary table
-    phase_rows = ""
     if detail.phases:
         phase_rows_list: list[str] = []
         for i, phase in enumerate(detail.phases, 1):
@@ -329,8 +426,7 @@ def _generate_index_page(
     else:
         phase_rows = "<h2>Phases</h2>\n<p>No phase data available.</p>"
 
-    body = f"<h1>Run Report: {_html_escape(detail.task_name or '(unknown)')}</h1>\n{meta_table}\n{phase_rows}"
-    return _page(f"Report: {detail.task_name}", nav_html, body)
+    return f"{meta_table}\n{phase_rows}"
 
 
 def _generate_phases_page(
@@ -463,6 +559,78 @@ def _generate_conversations_page(run_dir: Path, detail: RunDetail) -> str:
 
     body = "<h1>Conversations</h1>\n" + "\n".join(sections)
     return _page("Conversations", nav_html, body)
+
+
+def _generate_pipeline_page(run_dir: Path, detail: RunDetail) -> str:
+    """Generate the Pipeline page showing all LLM conversations."""
+    nav_html = _nav("pipeline.html", _has_problems(run_dir))
+    sections: list[str] = []
+
+    # Find all llm_*.json files in the run directory
+    llm_files = sorted(run_dir.glob("llm_*.json"))
+
+    if not llm_files:
+        body = "<h1>Pipeline Conversations</h1>\n<p>No conversation data available.</p>"
+        return _page("Pipeline", nav_html, body)
+
+    for llm_file in llm_files:
+        try:
+            data: dict[str, Any] = json.loads(llm_file.read_text())
+        except (json.JSONDecodeError, OSError):
+            sections.append(
+                f'<h2 id="{_html_escape(llm_file.name)}">{_html_escape(llm_file.name)}</h2>\n'
+                f"<p><em>Could not parse file.</em></p>"
+            )
+            continue
+
+        step_name = data.get("step", llm_file.stem)
+        model = data.get("model", "unknown")
+        input_tokens = data.get("input_tokens", 0)
+        output_tokens = data.get("output_tokens", 0)
+
+        heading = (
+            f'<h2 id="{_html_escape(llm_file.name)}">'
+            f'{_html_escape(step_name)}'
+            f'</h2>'
+        )
+        token_info = (
+            f'<p class="token-info">Model: {_html_escape(model)} | '
+            f'Tokens: {input_tokens:,} in / {output_tokens:,} out</p>'
+        )
+
+        # Render prompt messages
+        messages = data.get("messages", [])
+        prompt_parts: list[str] = []
+        for msg in messages:
+            role = msg.get("role", "unknown")
+            content = msg.get("content", "")
+            if isinstance(content, str) and len(content) > 10_000:
+                content = content[:10_000] + "\n... (truncated)"
+            elif not isinstance(content, str):
+                content = json.dumps(content, indent=2)[:10_000]
+            role_cls = f"msg-{role}" if role in ("user", "assistant", "system") else "msg-system"
+            prompt_parts.append(
+                f'<details><summary><span class="msg-role">{_html_escape(role)}</span></summary>'
+                f'<div class="detail-body {role_cls}"><pre>{_html_escape(content)}</pre></div></details>'
+            )
+
+        # Render response
+        response_text = data.get("response_text", "")
+        if len(response_text) > 10_000:
+            response_text = response_text[:10_000] + "\n... (truncated)"
+
+        response_html = (
+            f'<details open><summary><span class="msg-role">response</span></summary>'
+            f'<div class="detail-body msg-assistant"><pre>{_html_escape(response_text)}</pre></div></details>'
+        )
+
+        sections.append(
+            f"{heading}\n{token_info}\n"
+            f"{''.join(prompt_parts)}\n{response_html}"
+        )
+
+    body = "<h1>Pipeline Conversations</h1>\n" + "\n".join(sections)
+    return _page("Pipeline", nav_html, body)
 
 
 def _generate_screenshots_page(
@@ -773,6 +941,7 @@ def generate_report(run_dir: Path) -> Path:
 
     pages: dict[str, str] = {
         "index.html": _generate_index_page(run_dir, detail, ss_map),
+        "pipeline.html": _generate_pipeline_page(run_dir, detail),
         "phases.html": _generate_phases_page(run_dir, detail, phase_summaries, ss_map),
         "events.html": _generate_events_page(run_dir),
         "problems.html": _generate_problems_page(run_dir, detail, ss_map),

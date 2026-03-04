@@ -10,6 +10,7 @@ from typing import Any, Callable
 import anthropic
 
 from spark_runner.classification import _observation_text
+from spark_runner.llm_trace import save_llm_conversation
 from spark_runner.models import ModelConfig
 
 # Budget for the knowledge index text sent to the LLM (~140k tokens at ~3.5
@@ -77,6 +78,7 @@ def find_relevant_knowledge(
     knowledge_index: list[dict[str, Any]],
     client: anthropic.Anthropic,
     model_config: ModelConfig | None = None,
+    run_dir: Path | None = None,
 ) -> dict[str, Any]:
     """Use an LLM to find reusable subtasks and observations from prior goals.
 
@@ -141,10 +143,7 @@ def find_relevant_knowledge(
     index_text: str = "\n\n".join(kept_parts)
     print(f"  Sending {len(index_text)} chars to LLM for knowledge matching...")
 
-    response: anthropic.types.Message = client.messages.create(
-        model=model_config.model,
-        max_tokens=model_config.max_tokens,
-        messages=[{"role": "user", "content": f"""You are analyzing a knowledge base of prior browser automation runs to find reusable components for a new task.
+    messages: list[dict[str, Any]] = [{"role": "user", "content": f"""You are analyzing a knowledge base of prior browser automation runs to find reusable components for a new task.
 
 New task prompt:
 {prompt}
@@ -169,8 +168,14 @@ Return ONLY valid JSON:
 IMPORTANT:
 - Only include subtasks whose content genuinely matches what the new task needs — don't match on name alone.
 - For observations, include any that would help the new task succeed (UI patterns, timing, form quirks, etc).
-- If nothing is reusable, return empty arrays."""}],
+- If nothing is reusable, return empty arrays."""}]
+    response: anthropic.types.Message = client.messages.create(
+        model=model_config.model,
+        max_tokens=model_config.max_tokens,
+        messages=messages,
     )
+    if run_dir is not None:
+        save_llm_conversation(run_dir, "knowledge_matching", messages, response)
 
     text: str = response.content[0].text.strip()
     try:

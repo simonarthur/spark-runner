@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import json
 import re
+from pathlib import Path
 from typing import Any
 
 import anthropic
 
 from spark_runner.classification import _observation_text
+from spark_runner.llm_trace import save_llm_conversation
 from spark_runner.models import ModelConfig
 
 
@@ -17,6 +19,7 @@ def route_observations_to_phases(
     phases: list[dict[str, str]],
     client: anthropic.Anthropic,
     model_config: ModelConfig | None = None,
+    run_dir: Path | None = None,
 ) -> dict[str, list[str | dict[str, str]]]:
     """Route each observation to only the phase(s) where it is relevant.
 
@@ -65,11 +68,14 @@ def route_observations_to_phases(
         "If an observation is not relevant to any phase, omit it."
     )
 
+    messages: list[dict[str, Any]] = [{"role": "user", "content": prompt}]
     response: anthropic.types.Message = client.messages.create(
         model=model_config.model,
         max_tokens=model_config.max_tokens,
-        messages=[{"role": "user", "content": prompt}],
+        messages=messages,
     )
+    if run_dir is not None:
+        save_llm_conversation(run_dir, "observation_routing", messages, response)
     text: str = response.content[0].text.strip()
 
     try:

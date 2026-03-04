@@ -9,6 +9,7 @@ from typing import Any
 
 import anthropic
 
+from spark_runner.llm_trace import save_llm_conversation
 from spark_runner.models import ClassificationRules, ModelConfig
 
 
@@ -83,6 +84,7 @@ def classify_observations(
     client: anthropic.Anthropic,
     model_config: ModelConfig | None = None,
     rules: ClassificationRules | None = None,
+    run_dir: Path | None = None,
 ) -> list[dict[str, str]]:
     """Use an LLM to classify each observation as an error or a warning.
 
@@ -108,10 +110,7 @@ def classify_observations(
 
     rules_section: str = _build_rules_prompt_section(rules)
 
-    response: anthropic.types.Message = client.messages.create(
-        model=model_config.model,
-        max_tokens=model_config.max_tokens,
-        messages=[{"role": "user", "content": f"""You are a QA analyst classifying observations from a browser automation test run.
+    classify_messages: list[dict[str, Any]] = [{"role": "user", "content": f"""You are a QA analyst classifying observations from a browser automation test run.
 
 Classify each observation as "error" or "warning" using these criteria:
 
@@ -141,8 +140,14 @@ Return ONLY a valid JSON array with one entry per observation, in the same order
 [
   {{"text": "observation text here", "severity": "error"}},
   {{"text": "observation text here", "severity": "warning"}}
-]"""}],
+]"""}]
+    response: anthropic.types.Message = client.messages.create(
+        model=model_config.model,
+        max_tokens=model_config.max_tokens,
+        messages=classify_messages,
     )
+    if run_dir is not None:
+        save_llm_conversation(run_dir, "classify_observations", classify_messages, response)
     text: str = response.content[0].text.strip()
     match: re.Match[str] | None = re.search(r"\[.*\]", text, re.DOTALL)
     if match:

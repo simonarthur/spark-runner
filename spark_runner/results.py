@@ -44,6 +44,7 @@ class RunDetail:
     run_dir: Path = field(default_factory=lambda: Path())
     phases: list[PhaseDetail] = field(default_factory=list)
     screenshots: list[ScreenshotRecord] = field(default_factory=list)
+    pipeline: list[dict[str, Any]] = field(default_factory=list)
 
 
 def list_runs(
@@ -160,6 +161,14 @@ def get_run_detail(run_dir: Path) -> RunDetail:
         detail.task_name = run_dir.parent.name
     if not detail.timestamp:
         detail.timestamp = run_dir.name
+
+    # Load pipeline data if available
+    pipeline_path = run_dir / "pipeline.json"
+    if pipeline_path.exists():
+        try:
+            detail.pipeline = json.loads(pipeline_path.read_text())
+        except (json.JSONDecodeError, OSError):
+            pass
 
     return detail
 

@@ -10,6 +10,7 @@ from typing import Any
 import anthropic
 
 from spark_runner.classification import _observation_text
+from spark_runner.llm_trace import save_llm_conversation
 from spark_runner.log import log_event, log_problem
 from spark_runner.models import ModelConfig
 
@@ -55,6 +56,7 @@ def merge_observations(
     new: list[str | dict[str, str]],
     client: anthropic.Anthropic,
     model_config: ModelConfig | None = None,
+    run_dir: Path | None = None,
 ) -> list[dict[str, str]]:
     """Use an LLM to merge and de-duplicate two lists of observations.
 
@@ -78,10 +80,7 @@ def merge_observations(
     existing_texts: list[str] = [_observation_text(o) for o in existing]
     new_texts: list[str] = [_observation_text(o) for o in new]
 
-    response: anthropic.types.Message = client.messages.create(
-        model=model_config.model,
-        max_tokens=model_config.max_tokens,
-        messages=[{"role": "user", "content": f"""You have two lists of observations from browser automation runs.
+    merge_messages: list[dict[str, Any]] = [{"role": "user", "content": f"""You have two lists of observations from browser automation runs.
 Merge them into a single de-duplicated list. If two observations say the same thing in different words, keep the more detailed or recent one. Preserve all unique information.
 
 Existing observations:
@@ -90,8 +89,14 @@ Existing observations:
 New observations:
 {json.dumps(new_texts, indent=2)}
 
-Return ONLY a valid JSON array of strings — the merged, de-duplicated observations."""}],
+Return ONLY a valid JSON array of strings — the merged, de-duplicated observations."""}]
+    response: anthropic.types.Message = client.messages.create(
+        model=model_config.model,
+        max_tokens=model_config.max_tokens,
+        messages=merge_messages,
     )
+    if run_dir is not None:
+        save_llm_conversation(run_dir, "merge_observations", merge_messages, response)
     text: str = response.content[0].text.strip()
     match: re.Match[str] | None = re.search(r"\[.*\]", text, re.DOTALL)
     if match:

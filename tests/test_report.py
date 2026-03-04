@@ -28,6 +28,8 @@ def _make_run_dir(
     phase_summaries: list[dict[str, str]] | None = None,
     screenshots: list[str] | None = None,
     conversation_files: dict[str, object] | None = None,
+    pipeline: list[dict[str, object]] | None = None,
+    llm_files: dict[str, object] | None = None,
 ) -> Path:
     """Create a synthetic run directory under *tmp_path*."""
     run_dir = tmp_path / task_name / "2025-01-01T00-00-00"
@@ -78,11 +80,19 @@ def _make_run_dir(
             else:
                 (conv_dir / fname).write_text(json.dumps(data))
 
+    if pipeline is not None:
+        (run_dir / "pipeline.json").write_text(json.dumps(pipeline, indent=2))
+
+    if llm_files:
+        for fname, data in llm_files.items():
+            (run_dir / fname).write_text(json.dumps(data))
+
     return run_dir
 
 
 _EXPECTED_FILES = [
     "index.html",
+    "pipeline.html",
     "phases.html",
     "events.html",
     "problems.html",
@@ -405,6 +415,112 @@ class TestGenerateReport:
         assert "No conversation logs found" in conv_html
 
 
+class TestPipelineRendering:
+    """Tests for pipeline timeline and pipeline page."""
+
+    def test_overview_renders_pipeline_steps(self, tmp_path: Path) -> None:
+        pipeline = [
+            {
+                "name": "Goal Source",
+                "step_type": "goal_source",
+                "status": "completed",
+                "summary": "CLI prompt",
+                "conversation_file": None,
+            },
+            {
+                "name": "Task Decomposition",
+                "step_type": "task_decomposition",
+                "status": "completed",
+                "summary": "3 phases planned",
+                "conversation_file": "llm_task_decomposition.json",
+            },
+            {
+                "name": "Phase: Login",
+                "step_type": "phase_execution",
+                "status": "completed",
+                "summary": "SUCCESS",
+            },
+            {
+                "name": "Phase: Search",
+                "step_type": "phase_execution",
+                "status": "failed",
+                "summary": "FAILED",
+            },
+        ]
+        run_dir = _make_run_dir(
+            tmp_path,
+            phases=[
+                {"name": "Login", "outcome": "SUCCESS", "screenshots": []},
+                {"name": "Search", "outcome": "FAILED", "screenshots": []},
+            ],
+            pipeline=pipeline,
+        )
+        generate_report(run_dir)
+        index_html = (run_dir / "report" / "index.html").read_text()
+
+        assert "Pipeline" in index_html
+        assert "Goal Source" in index_html
+        assert "Task Decomposition" in index_html
+        assert "3 phases planned" in index_html
+        assert "pipeline-timeline" in index_html
+        assert "view conversation" in index_html
+
+    def test_overview_fallback_without_pipeline(self, tmp_path: Path) -> None:
+        """Old runs without pipeline.json should still render the phase table."""
+        run_dir = _make_run_dir(
+            tmp_path,
+            phases=[
+                {"name": "Login", "outcome": "SUCCESS", "screenshots": []},
+            ],
+        )
+        generate_report(run_dir)
+        index_html = (run_dir / "report" / "index.html").read_text()
+
+        # Should fall back to the old-style phase table
+        assert "Login" in index_html
+        assert "SUCCESS" in index_html
+        # Should NOT have pipeline timeline div in the body
+        assert '<div class="pipeline-timeline">' not in index_html
+
+    def test_pipeline_page_renders_conversations(self, tmp_path: Path) -> None:
+        llm_data = {
+            "step": "knowledge_matching",
+            "model": "claude-sonnet-4-5-20250929",
+            "timestamp": "2026-03-04T10:15:30Z",
+            "messages": [{"role": "user", "content": "Find relevant knowledge"}],
+            "response_text": "Here is the matched knowledge",
+            "stop_reason": "end_turn",
+            "input_tokens": 1234,
+            "output_tokens": 567,
+        }
+        run_dir = _make_run_dir(
+            tmp_path,
+            llm_files={"llm_knowledge_matching.json": llm_data},
+        )
+        generate_report(run_dir)
+        pipeline_html = (run_dir / "report" / "pipeline.html").read_text()
+
+        assert "knowledge_matching" in pipeline_html
+        assert "claude-sonnet-4-5-20250929" in pipeline_html
+        assert "1,234" in pipeline_html  # formatted input tokens
+        assert "567" in pipeline_html
+        assert "Find relevant knowledge" in pipeline_html
+        assert "Here is the matched knowledge" in pipeline_html
+
+    def test_pipeline_page_no_conversations(self, tmp_path: Path) -> None:
+        run_dir = _make_run_dir(tmp_path)
+        generate_report(run_dir)
+        pipeline_html = (run_dir / "report" / "pipeline.html").read_text()
+
+        assert "No conversation data available" in pipeline_html
+
+    def test_pipeline_page_in_nav(self, tmp_path: Path) -> None:
+        from spark_runner.report import _nav
+        nav_html = _nav("index.html", has_problems=True)
+        assert "pipeline.html" in nav_html
+        assert "Pipeline" in nav_html
+
+
 class TestHtmlEscape:
     def test_escapes_angle_brackets(self) -> None:
         assert _html_escape("<script>") == "&lt;script&gt;"
@@ -448,10 +564,11 @@ class TestMarkdownToHtml:
         assert "&lt;script&gt;" in result
 
     def test_nav_links_all_pages(self) -> None:
-        """Verify all 6 pages appear in the nav bar."""
+        """Verify all 7 pages appear in the nav bar."""
         from spark_runner.report import _nav
         nav_html = _nav("index.html", has_problems=True)
         assert "index.html" in nav_html
+        assert "pipeline.html" in nav_html
         assert "phases.html" in nav_html
         assert "events.html" in nav_html
         assert "problems.html" in nav_html

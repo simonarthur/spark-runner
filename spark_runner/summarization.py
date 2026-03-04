@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import json
 import re
+from pathlib import Path
 from typing import Any
 
 import anthropic
 from browser_use.agent.views import AgentHistoryList
 
+from spark_runner.llm_trace import save_llm_conversation
 from spark_runner.models import ModelConfig
 
 
@@ -51,6 +53,7 @@ def summarize_phase(
     success: bool,
     client: anthropic.Anthropic,
     model_config: ModelConfig | None = None,
+    run_dir: Path | None = None,
 ) -> str:
     """Use an LLM to generate a structured summary of a completed phase.
 
@@ -96,11 +99,16 @@ Produce a structured summary with these sections:
 
 Be concise but specific. Use the actual element names and URLs from the history."""
 
+    messages: list[dict[str, Any]] = [{"role": "user", "content": prompt}]
     response: anthropic.types.Message = client.messages.create(
         model=model_config.model,
         max_tokens=model_config.max_tokens,
-        messages=[{"role": "user", "content": prompt}],
+        messages=messages,
     )
+    if run_dir is not None:
+        from spark_runner.storage import phase_name_to_slug
+        step_name = f"summarize_{phase_name_to_slug(phase_name)}"
+        save_llm_conversation(run_dir, step_name, messages, response)
     return response.content[0].text
 
 
@@ -110,6 +118,7 @@ def generate_task_report(
     summaries: list[dict[str, str]],
     client: anthropic.Anthropic,
     model_config: ModelConfig | None = None,
+    run_dir: Path | None = None,
 ) -> dict[str, Any]:
     """Use an LLM to generate the final task report.
 
@@ -131,10 +140,7 @@ def generate_task_report(
         for s in summaries
     )
 
-    response: anthropic.types.Message = client.messages.create(
-        model=model_config.model,
-        max_tokens=model_config.max_tokens,
-        messages=[{"role": "user", "content": f"""You are writing a task report for a browser automation workflow.
+    report_messages: list[dict[str, Any]] = [{"role": "user", "content": f"""You are writing a task report for a browser automation workflow.
 
 Task name: {task_name}
 Original prompt: {prompt}
@@ -149,8 +155,14 @@ Return ONLY valid JSON with exactly these fields:
 }}
 
 key_observations should be a list of strings — anything an LLM agent should know for future runs (UI quirks, timing, error patterns).
-Do NOT include a subtask breakdown — that will be added separately."""}],
+Do NOT include a subtask breakdown — that will be added separately."""}]
+    response: anthropic.types.Message = client.messages.create(
+        model=model_config.model,
+        max_tokens=model_config.max_tokens,
+        messages=report_messages,
     )
+    if run_dir is not None:
+        save_llm_conversation(run_dir, "task_report", report_messages, response)
     text: str = response.content[0].text.strip()
     match: re.Match[str] | None = re.search(r"\{.*\}", text, re.DOTALL)
     if match:

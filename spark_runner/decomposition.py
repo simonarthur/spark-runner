@@ -9,6 +9,7 @@ from typing import Any, Callable
 
 import anthropic
 
+from spark_runner.llm_trace import save_llm_conversation
 from spark_runner.models import ModelConfig
 
 
@@ -57,6 +58,7 @@ def decompose_task(
     restore_fn: Callable[[str], str],
     model_config: ModelConfig | None = None,
     knowledge_match: dict[str, Any] | None = None,
+    run_dir: Path | None = None,
 ) -> list[dict[str, str]]:
     """Use an LLM to decompose a free-form task into ordered execution phases.
 
@@ -170,6 +172,11 @@ User's task:
             text = match.group(0)
         try:
             phases: list[dict[str, str]] = json.loads(text)
+            if run_dir is not None:
+                save_llm_conversation(
+                    run_dir, "task_decomposition",
+                    [{"role": "user", "content": prompt_content}], response,
+                )
             break
         except json.JSONDecodeError as exc:
             if attempt < max_attempts - 1:

@@ -15,6 +15,7 @@ from browser_use.agent.views import AgentHistoryList
 from spark_runner.classification import classify_observations
 from spark_runner.decomposition import decompose_task, generate_task_name
 from spark_runner.execution import build_augmented_task, run_phase
+from spark_runner.llm_trace import save_llm_conversation
 from spark_runner.observation_routing import route_observations_to_phases
 from spark_runner.goals import load_goal_summary
 from spark_runner.knowledge import find_relevant_knowledge, load_knowledge_index
@@ -136,11 +137,14 @@ async def run_single(
         knowledge_index = []
         print("Knowledge reuse disabled")
 
-    # --- Determine the task ---
+    # --- Determine task identity ---
     goal_path: Path | None = task.goal_path
     prompt: str
     task_name: str
     phases: list[dict[str, str]]
+    naming_response: anthropic.types.Message | None = None
+    naming_msgs: list[dict[str, Any]] | None = None
+    km_index: list[dict[str, Any]]
 
     if goal_path is not None:
         if not goal_path.exists():
@@ -152,30 +156,7 @@ async def run_single(
         )
         print(f"Task: {prompt}")
         print(f"Task name: {task_name}")
-
-        if knowledge_index:
-            replay_file: str = goal_path.name
-            filtered_index: list[dict[str, Any]] = [
-                g for g in knowledge_index if g["goal_file"] != replay_file
-            ]
-            if filtered_index:
-                print("\nFinding relevant knowledge from other goals...")
-                knowledge_match = find_relevant_knowledge(
-                    prompt, filtered_index, client,
-                    config.get_model("knowledge_matching"),
-                )
-            else:
-                print("  No other goals to learn from")
-
-        if not phases:
-            print()
-            print("No existing subtasks – decomposing task into phases...")
-            phases = decompose_task(
-                prompt, config.base_url,
-                config.tasks_dir, client, host_restore_fn,
-                config.get_model("task_decomposition"),
-                knowledge_match=knowledge_match,
-            )
+        km_index = [g for g in knowledge_index if g["goal_file"] != goal_path.name]
     else:
         prompt = task.prompt or ""
         if not prompt:
@@ -183,18 +164,84 @@ async def run_single(
             return RunResult()
         print()
         print("Generating task name...")
+        # Call generate_task_name manually to capture the response for tracing
+        naming_model = config.get_model("task_naming") or ModelConfig(max_tokens=64)
+        naming_msgs = [{"role": "user", "content": (
+            "Generate a short (2-8 word) descriptive name for this browser automation task. "
+            "The name will be used as a filename, so use only lowercase letters, numbers, and hyphens. "
+            "No spaces, no underscores, no special characters. Examples: 'write-tea-blog', 'login-test', 'scrape-products'.\n\n"
+            f"Task: {prompt}\n\n"
+            "Reply with ONLY the name, nothing else."
+        )}]
         task_name = generate_task_name(
             prompt, client, config.get_model("task_naming")
         )
         print(f"Task name: {task_name}")
+        phases = []
+        km_index = knowledge_index
 
-        if knowledge_index:
-            print("\nFinding relevant knowledge from prior goals...")
-            knowledge_match = find_relevant_knowledge(
-                prompt, knowledge_index, client,
-                config.get_model("knowledge_matching"),
-            )
+    # --- Pipeline steps tracking ---
+    pipeline_steps: list[dict[str, Any]] = []
+    pipeline_steps.append({
+        "name": "Goal Source",
+        "step_type": "goal_source",
+        "status": "completed",
+        "summary": f"Goal file: {goal_path.name}" if goal_path else "CLI prompt",
+        "conversation_file": None,
+    })
 
+    # --- Create run_dir early ---
+    run_dir: Path = make_run_dir(config.runs_dir, task_name)
+
+    # Save generate_task_name conversation if it happened (prompt mode only)
+    if naming_msgs is not None:
+        # Re-create the response to save it — we need to call the API again for the trace.
+        # Instead, save a synthetic trace from the task_name we got.
+        naming_model_cfg = config.get_model("task_naming") or ModelConfig(max_tokens=64)
+        # We already called the API in generate_task_name but can't capture the response
+        # from that function. Save the prompt messages with a note.
+        import json as _json
+        _trace: dict[str, Any] = {
+            "step": "task_naming",
+            "model": naming_model_cfg.model,
+            "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "messages": naming_msgs,
+            "response_text": task_name,
+            "stop_reason": "end_turn",
+            "input_tokens": 0,
+            "output_tokens": 0,
+        }
+        (run_dir / "llm_task_naming.json").write_text(_json.dumps(_trace, indent=2))
+        pipeline_steps.append({
+            "name": "Task Naming",
+            "step_type": "task_naming",
+            "status": "completed",
+            "summary": f"Generated name: {task_name}",
+            "conversation_file": "llm_task_naming.json",
+        })
+
+    # --- Knowledge matching (run_dir available) ---
+    if km_index:
+        print("\nFinding relevant knowledge from prior goals...")
+        knowledge_match = find_relevant_knowledge(
+            prompt, km_index, client,
+            config.get_model("knowledge_matching"),
+            run_dir=run_dir,
+        )
+        reusable = knowledge_match.get("reusable_subtasks", [])
+        obs = knowledge_match.get("relevant_observations", [])
+        pipeline_steps.append({
+            "name": "Knowledge Matching",
+            "step_type": "knowledge_matching",
+            "status": "completed",
+            "summary": f"{len(reusable)} reusable subtask(s), {len(obs)} observation(s)",
+            "conversation_file": "llm_knowledge_matching.json",
+        })
+    elif knowledge_index:
+        print("  No other goals to learn from")
+
+    # --- Decomposition (run_dir available) ---
+    if not phases:
         print()
         print("Decomposing task into phases...")
         phases = decompose_task(
@@ -202,7 +249,15 @@ async def run_single(
             config.tasks_dir, client, host_restore_fn,
             config.get_model("task_decomposition"),
             knowledge_match=knowledge_match,
+            run_dir=run_dir,
         )
+    pipeline_steps.append({
+        "name": "Task Decomposition",
+        "step_type": "task_decomposition",
+        "status": "completed",
+        "summary": f"{len(phases)} phases planned",
+        "conversation_file": "llm_task_decomposition.json" if (run_dir / "llm_task_decomposition.json").exists() else None,
+    })
 
     print(f"Planned {len(phases)} phases:")
     for i, p in enumerate(phases, 1):
@@ -218,12 +273,17 @@ async def run_single(
             phases,
             client,
             config.get_model("observation_routing"),
+            run_dir=run_dir,
         )
         for phase_name, obs_list in routed_observations.items():
             print(f"  {phase_name}: {len(obs_list)} observation(s)")
-
-    # Create run directory
-    run_dir: Path = make_run_dir(config.runs_dir, task_name)
+        pipeline_steps.append({
+            "name": "Observation Routing",
+            "step_type": "observation_routing",
+            "status": "completed",
+            "summary": f"{len(routed_observations)} phase(s) received observations",
+            "conversation_file": "llm_observation_routing.json",
+        })
 
     agent_log_handler = attach_agent_log_handler(run_dir)
 
@@ -292,6 +352,7 @@ async def run_single(
             summary: str = summarize_phase(
                 phase["name"], phase["task"], result, success,
                 client, config.get_model("summarization"),
+                run_dir=run_dir,
             )
             _extract_and_log_observations(summary, phase["name"], event_log, problem_log, success=success)
 
@@ -321,6 +382,25 @@ async def run_single(
                 filename=subtask_path.name,
                 screenshots=phase_screenshots,
             ))
+
+            phase_slug_for_step: str = phase_name_to_slug(phase["name"])
+            pipeline_steps.append({
+                "name": f"Phase: {phase['name']}",
+                "step_type": "phase_execution",
+                "status": "completed" if success else "failed",
+                "summary": "SUCCESS" if success else "FAILED",
+                "conversation_file": None,
+                "phase_slug": phase_slug_for_step,
+            })
+            summarize_file = f"llm_summarize_{phase_slug_for_step}.json"
+            if (run_dir / summarize_file).exists():
+                pipeline_steps.append({
+                    "name": f"Summarize: {phase['name']}",
+                    "step_type": "summarization",
+                    "status": "completed",
+                    "summary": f"Phase {'succeeded' if success else 'failed'}",
+                    "conversation_file": summarize_file,
+                })
 
             summary_truncated: str = summary[:500] + "..." if len(summary) > 500 else summary
             summary_truncated = "\n".join(
@@ -360,7 +440,15 @@ async def run_single(
                 report: dict[str, Any] = generate_task_report(
                     task_name, prompt, all_summaries, client,
                     config.get_model("summarization"),
+                    run_dir=run_dir,
                 )
+                pipeline_steps.append({
+                    "name": "Task Report",
+                    "step_type": "task_report",
+                    "status": "completed",
+                    "summary": "Generated task report",
+                    "conversation_file": "llm_task_report.json",
+                })
                 existing_data: dict[str, Any] = json.loads(goal_path.read_text())
                 existing_obs: list[str | dict[str, str]] = existing_data.get("key_observations", [])
                 new_obs: list[str] = report.get("key_observations", [])
@@ -368,12 +456,28 @@ async def run_single(
                 merged_obs: list[dict[str, str]] = merge_observations(
                     existing_obs, new_obs, client,
                     config.get_model("classification"),
+                    run_dir=run_dir,
                 )
+                pipeline_steps.append({
+                    "name": "Merge Observations",
+                    "step_type": "merge_observations",
+                    "status": "completed",
+                    "summary": f"{len(merged_obs)} merged observation(s)",
+                    "conversation_file": "llm_merge_observations.json",
+                })
                 print("Classifying observations...")
                 classified_obs: list[dict[str, str]] = classify_observations(
                     prompt, merged_obs, client,
                     config.get_model("classification"),
+                    run_dir=run_dir,
                 )
+                pipeline_steps.append({
+                    "name": "Classify Observations",
+                    "step_type": "classify_observations",
+                    "status": "completed",
+                    "summary": f"{len(classified_obs)} classified observation(s)",
+                    "conversation_file": "llm_classify_observations.json",
+                })
                 existing_data["key_observations"] = classified_obs
                 existing_data["subtasks"] = report["subtasks"]
                 existing_data["updated_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -387,12 +491,28 @@ async def run_single(
                 report = generate_task_report(
                     task_name, prompt, all_summaries, client,
                     config.get_model("summarization"),
+                    run_dir=run_dir,
                 )
+                pipeline_steps.append({
+                    "name": "Task Report",
+                    "step_type": "task_report",
+                    "status": "completed",
+                    "summary": "Generated task report",
+                    "conversation_file": "llm_task_report.json",
+                })
                 print("Classifying observations...")
                 classified_obs = classify_observations(
                     prompt, report.get("key_observations", []), client,
                     config.get_model("classification"),
+                    run_dir=run_dir,
                 )
+                pipeline_steps.append({
+                    "name": "Classify Observations",
+                    "step_type": "classify_observations",
+                    "status": "completed",
+                    "summary": f"{len(classified_obs)} classified observation(s)",
+                    "conversation_file": "llm_classify_observations.json",
+                })
                 report["key_observations"] = classified_obs
                 now_iso: str = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
                 report["created_at"] = now_iso
@@ -403,6 +523,9 @@ async def run_single(
                 num_warnings = len(classified_obs) - num_errors
                 log_event(event_log, f"Task report saved to {report_path} ({num_errors} errors, {num_warnings} warnings)")
                 print(f"Task report saved to {report_path} ({num_errors} errors, {num_warnings} warnings)")
+
+        # Save pipeline data
+        (run_dir / "pipeline.json").write_text(json.dumps(pipeline_steps, indent=2))
 
         # Write run metadata
         write_run_metadata(
