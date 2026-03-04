@@ -591,6 +591,56 @@ class TestGenerateRunsIndex:
         # Full goal should still be in the title attribute for hover
         assert f'title="{long_goal}"' in html
 
+    def test_sortable_headers(self, tmp_path: Path) -> None:
+        """Table headers should have the sortable class and sort-arrow spans."""
+        runs_dir = _make_runs_dir(tmp_path)
+        generate_runs_index(runs_dir)
+        html = (runs_dir / "index.html").read_text()
+
+        assert 'class="sortable"' in html
+        assert '<span class="sort-arrow">' in html
+        for col in ("Task", "Goal", "Run Datetime", "Status"):
+            assert f">{col}<" in html
+
+    def test_data_sort_value_attributes(self, tmp_path: Path) -> None:
+        """Each <td> should carry a data-sort-value attribute."""
+        runs_dir = _make_runs_dir(tmp_path)
+        generate_runs_index(runs_dir)
+        html = (runs_dir / "index.html").read_text()
+
+        assert 'data-sort-value="login-test"' in html
+        assert 'data-sort-value="search-test"' in html
+        # Datetime values
+        assert 'data-sort-value="2025-06-01' in html
+        assert 'data-sort-value="2025-06-02' in html
+
+    def test_status_sort_values(self, tmp_path: Path) -> None:
+        """Status cells should use '0' for FAIL and '1' for OK."""
+        runs_dir = _make_runs_dir(tmp_path)
+        generate_runs_index(runs_dir)
+        html = (runs_dir / "index.html").read_text()
+
+        assert 'data-sort-value="0"' in html  # FAIL
+        assert 'data-sort-value="1"' in html  # OK
+
+    def test_script_tag_present(self, tmp_path: Path) -> None:
+        """The generated HTML should contain an inline <script> for sorting."""
+        runs_dir = _make_runs_dir(tmp_path)
+        generate_runs_index(runs_dir)
+        html = (runs_dir / "index.html").read_text()
+
+        assert "<script>" in html
+        assert "sort" in html.lower()
+
+    def test_empty_runs_no_sortable_headers(self, tmp_path: Path) -> None:
+        """When there are no runs, the table (and sortable headers) should not appear."""
+        runs_dir = _make_runs_dir(tmp_path, runs=[])
+        generate_runs_index(runs_dir)
+        html = (runs_dir / "index.html").read_text()
+
+        assert '<th class="sortable">' not in html
+        assert "<thead>" not in html
+
     def test_generate_report_creates_runs_index(self, tmp_path: Path) -> None:
         """generate_report should also create a runs-level index."""
         runs_dir = _make_runs_dir(tmp_path)

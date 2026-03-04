@@ -837,6 +837,46 @@ td { font-size: 0.9rem; }
 a { color: var(--accent); text-decoration: none; }
 a:hover { text-decoration: underline; }
 .goal-cell { max-width: 400px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+th.sortable { cursor: pointer; user-select: none; position: relative; padding-right: 1.3rem; }
+th.sortable:hover { background: #e5e7eb; }
+th.sortable .sort-arrow { font-size: 0.7rem; margin-left: 0.3rem; color: var(--muted); }
+"""
+
+
+def _runs_index_js() -> str:
+    """Return inline JavaScript for sortable table columns."""
+    return """\
+(function() {
+  var table = document.querySelector("table");
+  if (!table) return;
+  var headers = table.querySelectorAll("th.sortable");
+  var sortState = {col: -1, asc: true};
+  headers.forEach(function(th, idx) {
+    th.addEventListener("click", function() {
+      if (sortState.col === idx) {
+        sortState.asc = !sortState.asc;
+      } else {
+        sortState.col = idx;
+        sortState.asc = true;
+      }
+      var tbody = table.querySelector("tbody");
+      var rows = Array.from(tbody.querySelectorAll("tr"));
+      rows.sort(function(a, b) {
+        var av = a.cells[idx].getAttribute("data-sort-value") || "";
+        var bv = b.cells[idx].getAttribute("data-sort-value") || "";
+        var cmp = av.localeCompare(bv);
+        return sortState.asc ? cmp : -cmp;
+      });
+      rows.forEach(function(r) { tbody.appendChild(r); });
+      headers.forEach(function(h) {
+        var arrow = h.querySelector(".sort-arrow");
+        if (arrow) arrow.textContent = "";
+      });
+      var arrow = th.querySelector(".sort-arrow");
+      if (arrow) arrow.textContent = sortState.asc ? "\\u25B2" : "\\u25BC";
+    });
+  });
+})();
 """
 
 
@@ -875,21 +915,27 @@ def generate_runs_index(runs_dir: Path) -> Path:
         # Truncate long goals for the table display
         goal_display = goal if len(goal) <= 120 else goal[:117] + "..."
 
+        status_sort = "0" if run.has_errors else "1"
         rows.append(
             f"<tr>"
-            f"<td>{name_cell}</td>"
-            f'<td class="goal-cell" title="{_html_escape(goal)}">{_html_escape(goal_display)}</td>'
-            f"<td>{_html_escape(run.timestamp)}</td>"
-            f"<td>{badge}</td>"
+            f'<td data-sort-value="{_html_escape(run.task_name)}">{name_cell}</td>'
+            f'<td class="goal-cell" data-sort-value="{_html_escape(goal)}" title="{_html_escape(goal)}">{_html_escape(goal_display)}</td>'
+            f'<td data-sort-value="{_html_escape(run.timestamp)}">{_html_escape(run.timestamp)}</td>'
+            f'<td data-sort-value="{status_sort}">{badge}</td>'
             f"</tr>"
         )
 
     if rows:
+        th_tpl = '<th class="sortable">{}<span class="sort-arrow"></span></th>'
+        header_row = "<tr>" + "".join(
+            th_tpl.format(h) for h in ("Task", "Goal", "Run Datetime", "Status")
+        ) + "</tr>"
         table = (
             "<table>\n"
-            "<tr><th>Task</th><th>Goal</th><th>Run Datetime</th><th>Status</th></tr>\n"
+            f"<thead>{header_row}</thead>\n"
+            "<tbody>\n"
             + "\n".join(rows)
-            + "\n</table>"
+            + "\n</tbody>\n</table>"
         )
     else:
         table = "<p>No runs found.</p>"
@@ -909,6 +955,7 @@ def generate_runs_index(runs_dir: Path) -> Path:
         f"<style>{_runs_index_css()}</style>\n"
         "</head>\n<body>\n"
         f"<div class=\"container\">\n{body}\n</div>\n"
+        f"<script>{_runs_index_js()}</script>\n"
         "</body>\n</html>\n"
     )
 
