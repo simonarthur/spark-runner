@@ -174,6 +174,11 @@ async def run_phase(
     """
     log_event(event_log, f"PHASE START: {name}")
 
+    assets_dir: Path = Path(__file__).resolve().parent / "assets"
+    available_files: list[str] = [
+        str(p) for p in assets_dir.iterdir() if p.is_file()
+    ]
+
     agent: Agent[Any, Any] = Agent(
         task=task,
         llm=llm,
@@ -181,6 +186,7 @@ async def run_phase(
         save_conversation_path=str(conversation_log),
         max_failures=5,
         max_actions_per_step=5,
+        available_file_paths=available_files,
     )
 
     result: AgentHistoryList[Any] = await agent.run(max_steps=50)

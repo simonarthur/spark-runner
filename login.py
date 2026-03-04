@@ -155,6 +155,11 @@ async def run_phase(name, task, llm, browser):
     print(f"  Phase: {name}")
     print(f"{'='*60}")
 
+    assets_dir = Path(__file__).resolve().parent / "spark_runner" / "assets"
+    available_files = [
+        str(p) for p in assets_dir.iterdir() if p.is_file()
+    ]
+
     agent = Agent(
         task=task,
         llm=llm,
@@ -163,6 +168,7 @@ async def run_phase(name, task, llm, browser):
         max_failures=5,
         max_actions_per_step=5,
         use_judge=False,
+        available_file_paths=available_files,
     )
 
     result = await agent.run(max_steps=50)
