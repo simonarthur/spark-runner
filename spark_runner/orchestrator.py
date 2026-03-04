@@ -158,6 +158,16 @@ async def run_single(
                 )
             else:
                 print("  No other goals to learn from")
+
+        if not phases:
+            print()
+            print("No existing subtasks – decomposing task into phases...")
+            phases = decompose_task(
+                prompt, config.base_url, cred.email, cred.password,
+                config.tasks_dir, client, restore_fn,
+                config.get_model("task_decomposition"),
+                knowledge_match=knowledge_match,
+            )
     else:
         prompt = task.prompt or ""
         if not prompt:

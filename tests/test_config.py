@@ -161,7 +161,7 @@ class TestBuildConfigEnvVarOverrides:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         env_data_dir = tmp_path / "env_data"
-        monkeypatch.setenv("SPARK_DATA_DIR", str(env_data_dir))
+        monkeypatch.setenv("SPARK_RUNNER_DATA_DIR", str(env_data_dir))
         config = build_config()
         assert config.data_dir == env_data_dir
 

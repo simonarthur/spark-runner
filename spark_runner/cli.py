@@ -248,7 +248,7 @@ def _validate_url(
 @cli.command()
 @click.option("-p", "--prompt", "prompts", multiple=True, help="Task prompt(s)")
 @click.option("-u", "--url", "base_url", default=None, callback=_validate_url,
-              help="Base URL")
+              envvar="SPARK_RUNNER_BASE_URL", help="Base URL")
 @click.option("--no-update-summary", is_flag=True, help="Don't update goal summaries")
 @click.option("--no-update-tasks", is_flag=True, help="Don't overwrite task files")
 @click.option("--no-knowledge-reuse", is_flag=True, help="Don't reuse prior knowledge")
@@ -258,6 +258,8 @@ def _validate_url(
 @click.option("--model", "model_strs", multiple=True, help="PURPOSE=MODEL_ID override")
 @click.option("--shared-session", is_flag=True, help="Share browser session across tasks")
 @click.option("--parallel", type=int, default=1, help="Parallel execution count")
+@click.option("--unrun", is_flag=True, help="Run goals that have never been run")
+@click.option("--failed", is_flag=True, help="Run goals whose last run had errors")
 @click.argument("goal_files", nargs=-1, type=click.Path(), shell_complete=_complete_goal_file)
 @click.pass_context
 def run(
@@ -273,6 +275,8 @@ def run(
     model_strs: tuple[str, ...],
     shared_session: bool,
     parallel: int,
+    unrun: bool,
+    failed: bool,
     goal_files: tuple[str, ...],
 ) -> None:
     """Run browser automation tasks."""
@@ -294,6 +298,19 @@ def run(
     )
     config.ensure_dirs()
 
+    # Discover goals matching --unrun / --failed filters
+    filtered_goal_paths: list[Path] = []
+    if (unrun or failed) and config.goal_summaries_dir is not None:
+        from spark_runner.goals import get_last_run_info
+
+        for gf_path in sorted(config.goal_summaries_dir.glob("*-task.json")):
+            task_name = gf_path.stem.removesuffix("-task")
+            run_info = get_last_run_info(config.runs_dir, task_name)
+            if unrun and run_info is None:
+                filtered_goal_paths.append(gf_path)
+            elif failed and run_info is not None and run_info[1] == "errors":
+                filtered_goal_paths.append(gf_path)
+
     # Build task specs
     tasks: list[TaskSpec] = []
     for p in prompts:
@@ -301,12 +318,28 @@ def run(
             prompt=p,
             credential_profile=credential_profile or "default",
         ))
+
+    # Collect goal paths from explicit args + filters, deduplicated
+    seen_goals: set[Path] = set()
+    all_goal_paths: list[Path] = []
     for gf in goal_files:
         gf_path = _resolve_goal_file(gf, config.goal_summaries_dir)
+        if gf_path not in seen_goals:
+            seen_goals.add(gf_path)
+            all_goal_paths.append(gf_path)
+    for gf_path in filtered_goal_paths:
+        if gf_path not in seen_goals:
+            seen_goals.add(gf_path)
+            all_goal_paths.append(gf_path)
+
+    for gf_path in all_goal_paths:
         tasks.append(TaskSpec(
             goal_path=gf_path,
             credential_profile=credential_profile or "default",
         ))
+
+    if not tasks and (unrun or failed):
+        raise click.ClickException("No matching goals found.")
 
     if not tasks:
         # Interactive mode
@@ -340,8 +373,10 @@ def goals(ctx: click.Context) -> None:
 
 
 @goals.command("list")
+@click.option("--unrun", is_flag=True, help="Show only goals that have never been run")
+@click.option("--failed", is_flag=True, help="Show only goals whose last run had errors")
 @click.pass_context
-def goals_list(ctx: click.Context) -> None:
+def goals_list(ctx: click.Context, unrun: bool, failed: bool) -> None:
     """List all existing goals."""
     data_dir = _get_data_dir(ctx)
     config_path = _get_config_path(ctx)
@@ -353,7 +388,10 @@ def goals_list(ctx: click.Context) -> None:
     from spark_runner.orchestrator import _make_restore_fn
 
     assert config.goal_summaries_dir is not None
-    list_goals(config.goal_summaries_dir, _make_restore_fn(config))
+    list_goals(
+        config.goal_summaries_dir, _make_restore_fn(config), config.runs_dir,
+        filter_unrun=unrun, filter_failed=failed,
+    )
 
 
 @goals.command("show")

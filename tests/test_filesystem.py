@@ -107,6 +107,22 @@ class TestLoadKnowledgeIndex:
         assert len(index) == 1
         assert index[0]["subtasks"] == []
 
+    def test_skips_non_dict_subtask_entries(
+        self, fake_tasks_dir: Path, fake_goal_summaries_dir: Path
+    ) -> None:
+        (fake_tasks_dir / "step.txt").write_text("Do the thing")
+        goal: dict[str, Any] = {
+            "main_task": "test",
+            "key_observations": [],
+            "subtasks": ["step.txt", {"filename": "step.txt"}],
+        }
+        (fake_goal_summaries_dir / "mixed-task.json").write_text(json.dumps(goal))
+        index = spark_runner.load_knowledge_index()
+        assert len(index) == 1
+        # The plain string entry is skipped; only the dict entry is loaded
+        assert len(index[0]["subtasks"]) == 1
+        assert index[0]["subtasks"][0]["filename"] == "step.txt"
+
     def test_restores_placeholders(
         self, fake_tasks_dir: Path, fake_goal_summaries_dir: Path
     ) -> None:
@@ -149,6 +165,19 @@ class TestLoadGoalSummary:
         goal_path.write_text(json.dumps(goal))
         with pytest.raises(FileNotFoundError):
             spark_runner.load_goal_summary(goal_path)
+
+    def test_skips_non_dict_subtask_entries(self, fake_tasks_dir: Path) -> None:
+        (fake_tasks_dir / "step.txt").write_text("Do the thing")
+        goal: dict[str, Any] = {
+            "main_task": "test",
+            "subtasks": ["step.txt", {"filename": "step.txt"}],
+        }
+        goal_path = fake_tasks_dir.parent / "goal.json"
+        goal_path.write_text(json.dumps(goal))
+        prompt, task_name, phases = spark_runner.load_goal_summary(goal_path)
+        assert prompt == "test"
+        # The plain string entry is skipped; only the dict entry produces a phase
+        assert len(phases) == 1
 
     def test_replay_prefix_injected(self, fake_tasks_dir: Path) -> None:
         (fake_tasks_dir / "nav.txt").write_text("Navigated to page")

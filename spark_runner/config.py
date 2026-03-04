@@ -88,7 +88,7 @@ def build_config(
             config_path = _resolve_path(env_config)
         else:
             default_data_dir = _resolve_path(
-                data_dir or os.environ.get("SPARK_DATA_DIR", "~/spark_runner")
+                data_dir or os.environ.get("SPARK_RUNNER_DATA_DIR", "~/spark_runner")
             )
             config_path = default_data_dir / "config.yaml"
 
@@ -99,8 +99,8 @@ def build_config(
     resolved_data_dir: Path
     if data_dir is not None:
         resolved_data_dir = _resolve_path(data_dir)
-    elif os.environ.get("SPARK_DATA_DIR"):
-        resolved_data_dir = _resolve_path(os.environ["SPARK_DATA_DIR"])
+    elif os.environ.get("SPARK_RUNNER_DATA_DIR"):
+        resolved_data_dir = _resolve_path(os.environ["SPARK_RUNNER_DATA_DIR"])
     elif general.get("data_dir"):
         resolved_data_dir = _resolve_path(general["data_dir"])
     else:

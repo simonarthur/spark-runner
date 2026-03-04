@@ -260,7 +260,7 @@ def load_goal_summary(goal_path: Path) -> tuple[str, str, list[dict[str, str]]]:
 
 def list_goals() -> None:
     """Print a summary of all existing goals."""
-    return _gl.list_goals(GOAL_SUMMARIES_DIR, _restore_from_storage)
+    return _gl.list_goals(GOAL_SUMMARIES_DIR, _restore_from_storage, RUNS_DIR)
 
 
 def classify_existing_goals() -> None:

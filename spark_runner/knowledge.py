@@ -45,6 +45,8 @@ def load_knowledge_index(
         }
 
         for subtask_entry in data.get("subtasks", []):
+            if not isinstance(subtask_entry, dict):
+                continue
             filename: str = subtask_entry.get("filename", "")
             subtask_path: Path = tasks_dir / filename
             if not subtask_path.exists():

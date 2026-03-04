@@ -10,15 +10,67 @@ from spark_runner.classification import _observation_text
 from spark_runner.execution import _REPLAY_PREFIX
 
 
+def get_last_run_info(
+    runs_dir: Path | None, task_name: str,
+) -> tuple[str, str] | None:
+    """Return ``(timestamp, status)`` for the most recent run, or None."""
+    if runs_dir is None:
+        return None
+    task_dir = runs_dir / task_name
+    if not task_dir.is_dir():
+        return None
+    run_dirs = sorted(
+        (d for d in task_dir.iterdir() if d.is_dir()),
+        reverse=True,
+    )
+    if not run_dirs:
+        return None
+
+    last_dir = run_dirs[0]
+    status = "unknown"
+    metadata_path = last_dir / "run_metadata.json"
+    if metadata_path.exists():
+        try:
+            meta: dict[str, Any] = json.loads(metadata_path.read_text())
+            phases = meta.get("phases", [])
+            if phases:
+                has_errors = any(
+                    p.get("outcome") != "SUCCESS" for p in phases
+                )
+                status = "errors" if has_errors else "ok"
+        except (json.JSONDecodeError, OSError):
+            pass
+    return last_dir.name, status
+
+
 def list_goals(
     goal_summaries_dir: Path,
     restore_fn: Callable[[str], str],
+    runs_dir: Path | None = None,
+    *,
+    filter_unrun: bool = False,
+    filter_failed: bool = False,
 ) -> None:
     """Print a summary of all existing goals from the goal summaries directory."""
     goal_files: list[Path] = sorted(goal_summaries_dir.glob("*-task.json"))
     if not goal_files:
         print("No goals found.")
         return
+
+    # Apply --unrun / --failed filters when requested
+    if filter_unrun or filter_failed:
+        filtered: list[Path] = []
+        for gf in goal_files:
+            task_name = gf.stem.removesuffix("-task")
+            run_info = get_last_run_info(runs_dir, task_name)
+            if filter_unrun and run_info is None:
+                filtered.append(gf)
+            elif filter_failed and run_info is not None and run_info[1] == "errors":
+                filtered.append(gf)
+        goal_files = filtered
+        if not goal_files:
+            print("No matching goals found.")
+            return
 
     print(f"Found {len(goal_files)} goal(s):\n")
     for goal_file in goal_files:
@@ -50,7 +102,15 @@ def list_goals(
         if num_unclassified:
             severity_parts.append(f"{num_unclassified} unclassified")
         severity_str: str = f" ({', '.join(severity_parts)})" if severity_parts else ""
+        task_name = goal_file.stem.removesuffix("-task")
+        last_run_info = get_last_run_info(runs_dir, task_name)
+        if last_run_info:
+            timestamp, status = last_run_info
+            last_run_str = f"  Last run: {timestamp} [{status}]"
+        else:
+            last_run_str = "  Last run: never"
         print(f"    Subtasks: {num_subtasks}  Observations: {num_observations}{severity_str}")
+        print(f"   {last_run_str}")
         print()
 
 
@@ -74,6 +134,8 @@ def load_goal_summary(
 
     phases: list[dict[str, str]] = []
     for entry in goal_data["subtasks"]:
+        if not isinstance(entry, dict):
+            continue
         subtask_path: Path = tasks_dir / entry["filename"]
         if not subtask_path.exists():
             raise FileNotFoundError(f"Subtask file not found: {subtask_path}")

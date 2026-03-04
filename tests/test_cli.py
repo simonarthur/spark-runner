@@ -462,6 +462,85 @@ class TestRunFlagCombinations:
         assert kwargs["headless"] is False
 
 
+# ── run: --unrun / --failed filters ──────────────────────────────────────
+
+
+class TestRunFilterFlags:
+    @patch("spark_runner.cli.build_config")
+    def test_unrun_no_matches_exits_with_error(
+        self,
+        mock_config: MagicMock,
+        runner: click.testing.CliRunner,
+        tmp_path: Path,
+    ) -> None:
+        """--unrun with no unrun goals should error, not prompt interactively."""
+        gs_dir = tmp_path / "goal_summaries"
+        gs_dir.mkdir()
+        runs_dir = tmp_path / "runs"
+        runs_dir.mkdir()
+        # Create a goal that has a run directory (so it's not "unrun")
+        (gs_dir / "login-task.json").write_text("{}")
+        task_run_dir = runs_dir / "login" / "2025-01-01_00-00-00"
+        task_run_dir.mkdir(parents=True)
+        mock_cfg = MagicMock(
+            base_url="https://x.com",
+            goal_summaries_dir=gs_dir,
+            runs_dir=runs_dir,
+        )
+        mock_config.return_value = mock_cfg
+        result = runner.invoke(cli, ["run", "--unrun"])
+        assert result.exit_code != 0
+        assert "No matching goals found" in result.output
+
+    @patch("spark_runner.cli.build_config")
+    def test_failed_no_matches_exits_with_error(
+        self,
+        mock_config: MagicMock,
+        runner: click.testing.CliRunner,
+        tmp_path: Path,
+    ) -> None:
+        """--failed with no failed goals should error, not prompt interactively."""
+        gs_dir = tmp_path / "goal_summaries"
+        gs_dir.mkdir()
+        runs_dir = tmp_path / "runs"
+        runs_dir.mkdir()
+        mock_cfg = MagicMock(
+            base_url="https://x.com",
+            goal_summaries_dir=gs_dir,
+            runs_dir=runs_dir,
+        )
+        mock_config.return_value = mock_cfg
+        result = runner.invoke(cli, ["run", "--failed"])
+        assert result.exit_code != 0
+        assert "No matching goals found" in result.output
+
+    @patch("spark_runner.cli.build_config")
+    @patch("spark_runner.orchestrator.run_single", new_callable=AsyncMock)
+    def test_unrun_discovers_never_run_goals(
+        self,
+        mock_run: AsyncMock,
+        mock_config: MagicMock,
+        runner: click.testing.CliRunner,
+        tmp_path: Path,
+    ) -> None:
+        """--unrun should select goals with no run directory."""
+        gs_dir = tmp_path / "goal_summaries"
+        gs_dir.mkdir()
+        runs_dir = tmp_path / "runs"
+        runs_dir.mkdir()
+        (gs_dir / "new-goal-task.json").write_text("{}")
+        mock_cfg = MagicMock(
+            base_url="https://x.com",
+            goal_summaries_dir=gs_dir,
+            runs_dir=runs_dir,
+        )
+        mock_config.return_value = mock_cfg
+        result = runner.invoke(cli, ["run", "--unrun"])
+        assert result.exit_code == 0
+        task_spec = mock_run.call_args.args[0]
+        assert task_spec.goal_path == gs_dir / "new-goal-task.json"
+
+
 # ── run: unknown options ─────────────────────────────────────────────────
 
 
