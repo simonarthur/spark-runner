@@ -18,7 +18,7 @@ from spark_runner.execution import build_augmented_task, run_phase
 from spark_runner.observation_routing import route_observations_to_phases
 from spark_runner.goals import load_goal_summary
 from spark_runner.knowledge import find_relevant_knowledge, load_knowledge_index
-from spark_runner.log import log_event, log_problem
+from spark_runner.log import attach_agent_log_handler, detach_agent_log_handler, log_event, log_problem
 from spark_runner.models import (
     CredentialProfile,
     ModelConfig,
@@ -225,6 +225,8 @@ async def run_single(
     # Create run directory
     run_dir: Path = make_run_dir(config.runs_dir, task_name)
 
+    agent_log_handler = attach_agent_log_handler(run_dir)
+
     event_log: Path = run_dir / "event_log.txt"
     conversation_log: Path = run_dir / "conversation_log.json"
     summaries_path: Path = run_dir / "phase_summaries.json"
@@ -343,6 +345,7 @@ async def run_single(
         except Exception as screenshot_err:
             log_problem(problem_log, f"Could not save unexpected-error screenshot: {screenshot_err}")
     finally:
+        detach_agent_log_handler(agent_log_handler)
         log_event(event_log, "WORKFLOW END")
         log_event(event_log, f"Conversation log saved to {conversation_log}")
         if problem_log.exists():
