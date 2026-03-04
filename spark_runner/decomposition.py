@@ -52,8 +52,6 @@ def generate_task_name(
 def decompose_task(
     prompt: str,
     host: str,
-    user_email: str,
-    user_password: str,
     tasks_dir: Path,
     client: anthropic.Anthropic,
     restore_fn: Callable[[str], str],
@@ -65,8 +63,6 @@ def decompose_task(
     Args:
         prompt: The user's task description.
         host: Base URL of the application under test.
-        user_email: Login email credential.
-        user_password: Login password credential.
         tasks_dir: Directory containing subtask files for reuse.
         client: Anthropic client for LLM calls.
         restore_fn: Function to restore placeholders in stored text.
@@ -119,8 +115,8 @@ Given a user's task description, decompose it into sequential phases that a brow
 
 IMPORTANT RULES:
 - The FIRST phase must ALWAYS be "Login" — navigate to {host} and log in with:
-    Email: {user_email}
-    Password: {user_password}
+    Email: {{USER_EMAIL}}
+    Password: {{USER_PASSWORD}}
 - Each phase should be a self-contained step with clear success criteria.
 - Write the task instructions as explicit, step-by-step directions for an AI agent controlling a browser.
 - Every phase must start with ALL of these paragraphs (copy them verbatim):

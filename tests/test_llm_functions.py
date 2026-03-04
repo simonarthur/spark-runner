@@ -125,6 +125,22 @@ class TestDecomposeTask:
         assert "Login" in result[0]["task"]
         assert "reuse" not in result[0]
 
+    def test_credentials_not_in_decomposition_prompt(self, mock_summary_client: MagicMock) -> None:
+        """Real credentials must never appear in the LLM prompt; only placeholders."""
+        phases = [{"name": "Login", "task": "Log in"}]
+        mock_summary_client.messages.create.return_value = make_llm_response(json.dumps(phases))
+
+        spark_runner.decompose_task("Do something")
+
+        call_args = mock_summary_client.messages.create.call_args
+        prompt_text: str = call_args.kwargs["messages"][0]["content"]
+        # Real credentials must be absent
+        assert "test@example.com" not in prompt_text
+        assert "test-password-123" not in prompt_text
+        # Placeholders must be present
+        assert "{USER_EMAIL}" in prompt_text
+        assert "{USER_PASSWORD}" in prompt_text
+
     def test_observations_included_in_prompt(self, mock_summary_client: MagicMock) -> None:
         """Relevant observations from prior runs are surfaced in the decomposition prompt."""
         phases = [{"name": "Login", "task": "Log in"}]

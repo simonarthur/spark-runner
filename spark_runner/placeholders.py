@@ -80,6 +80,15 @@ def sanitize_for_storage(
     )
 
 
+def restore_host_only(text: str, host: str) -> str:
+    """Restore ``{BASE_URL}`` but leave credential placeholders intact.
+
+    Use this for content flowing to the LLM so real credentials are never
+    sent to the API.
+    """
+    return placeholder_to_host(text, host)
+
+
 def restore_from_storage(
     text: str, host: str, email: str, password: str
 ) -> str:

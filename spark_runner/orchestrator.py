@@ -29,7 +29,7 @@ from spark_runner.models import (
     TaskSpec,
 )
 from spark_runner.observations import _extract_and_log_observations, merge_observations
-from spark_runner.placeholders import restore_from_storage, sanitize_for_storage
+from spark_runner.placeholders import restore_from_storage, restore_host_only, sanitize_for_storage
 from spark_runner.report import generate_report
 from spark_runner.results import write_run_metadata
 from spark_runner.storage import make_run_dir, phase_name_to_slug, safe_write_path
@@ -76,6 +76,13 @@ def _make_restore_fn(config: SparkConfig) -> Any:
     return _restore
 
 
+def _make_host_only_restore_fn(config: SparkConfig) -> Any:
+    """Create a restore closure that only resolves {BASE_URL}, leaving credential placeholders."""
+    def _restore(text: str) -> str:
+        return restore_host_only(text, config.base_url)
+    return _restore
+
+
 def _make_sanitize_fn(config: SparkConfig) -> Any:
     """Create a sanitize_for_storage closure using config credentials."""
     cred: CredentialProfile = config.active_credentials
@@ -110,6 +117,7 @@ async def run_single(
 
     cred: CredentialProfile = config.active_credentials
     restore_fn = _make_restore_fn(config)
+    host_restore_fn = _make_host_only_restore_fn(config)
     sanitize_fn = _make_sanitize_fn(config)
 
     assert config.tasks_dir is not None
@@ -121,7 +129,7 @@ async def run_single(
     if config.knowledge_reuse:
         print("Loading knowledge from prior goals...")
         knowledge_index: list[dict[str, Any]] = load_knowledge_index(
-            config.goal_summaries_dir, config.tasks_dir, restore_fn
+            config.goal_summaries_dir, config.tasks_dir, host_restore_fn
         )
         print(f"  Loaded {len(knowledge_index)} prior goal(s)")
     else:
@@ -140,7 +148,7 @@ async def run_single(
             return RunResult()
         print(f"Loading goal from: {goal_path}")
         prompt, task_name, phases = load_goal_summary(
-            goal_path, config.tasks_dir, restore_fn
+            goal_path, config.tasks_dir, host_restore_fn
         )
         print(f"Task: {prompt}")
         print(f"Task name: {task_name}")
@@ -163,8 +171,8 @@ async def run_single(
             print()
             print("No existing subtasks – decomposing task into phases...")
             phases = decompose_task(
-                prompt, config.base_url, cred.email, cred.password,
-                config.tasks_dir, client, restore_fn,
+                prompt, config.base_url,
+                config.tasks_dir, client, host_restore_fn,
                 config.get_model("task_decomposition"),
                 knowledge_match=knowledge_match,
             )
@@ -190,8 +198,8 @@ async def run_single(
         print()
         print("Decomposing task into phases...")
         phases = decompose_task(
-            prompt, config.base_url, cred.email, cred.password,
-            config.tasks_dir, client, restore_fn,
+            prompt, config.base_url,
+            config.tasks_dir, client, host_restore_fn,
             config.get_model("task_decomposition"),
             knowledge_match=knowledge_match,
         )

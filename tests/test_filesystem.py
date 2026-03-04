@@ -123,6 +123,25 @@ class TestLoadKnowledgeIndex:
         assert len(index[0]["subtasks"]) == 1
         assert index[0]["subtasks"][0]["filename"] == "step.txt"
 
+    def test_preserves_credential_placeholders(
+        self, fake_tasks_dir: Path, fake_goal_summaries_dir: Path
+    ) -> None:
+        """Credential placeholders like {USER_EMAIL} must survive into the knowledge index."""
+        (fake_tasks_dir / "step.txt").write_text("Login as {USER_EMAIL} with {USER_PASSWORD}")
+        goal: dict[str, Any] = {
+            "main_task": "test",
+            "key_observations": [],
+            "subtasks": [{"filename": "step.txt"}],
+        }
+        (fake_goal_summaries_dir / "cred-task.json").write_text(json.dumps(goal))
+        index = spark_runner.load_knowledge_index()
+        content: str = index[0]["subtasks"][0]["content"]
+        assert "{USER_EMAIL}" in content
+        assert "{USER_PASSWORD}" in content
+        # Real credentials must NOT appear
+        assert "test@example.com" not in content
+        assert "test-password-123" not in content
+
     def test_restores_placeholders(
         self, fake_tasks_dir: Path, fake_goal_summaries_dir: Path
     ) -> None:
@@ -178,6 +197,23 @@ class TestLoadGoalSummary:
         assert prompt == "test"
         # The plain string entry is skipped; only the dict entry produces a phase
         assert len(phases) == 1
+
+    def test_preserves_credential_placeholders(self, fake_tasks_dir: Path) -> None:
+        """Credential placeholders in task text must not be resolved for LLM consumption."""
+        (fake_tasks_dir / "login.txt").write_text("Log in as {USER_EMAIL} with {USER_PASSWORD}")
+        goal: dict[str, Any] = {
+            "main_task": "Login test",
+            "subtasks": [{"filename": "login.txt"}],
+        }
+        goal_path = fake_tasks_dir.parent / "goal.json"
+        goal_path.write_text(json.dumps(goal))
+
+        _, _, phases = spark_runner.load_goal_summary(goal_path)
+        task_text: str = phases[0]["task"]
+        assert "{USER_EMAIL}" in task_text
+        assert "{USER_PASSWORD}" in task_text
+        assert "test@example.com" not in task_text
+        assert "test-password-123" not in task_text
 
     def test_replay_prefix_injected(self, fake_tasks_dir: Path) -> None:
         (fake_tasks_dir / "nav.txt").write_text("Navigated to page")

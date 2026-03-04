@@ -124,6 +124,11 @@ def _sanitize_for_storage(text: str) -> str:
     return _ph.sanitize_for_storage(text, HOST, USER_EMAIL, USER_PASSWORD)
 
 
+def _restore_host_only(text: str) -> str:
+    """Restore {BASE_URL} but leave credential placeholders intact (safe for LLM)."""
+    return _ph.restore_host_only(text, HOST)
+
+
 def _restore_from_storage(text: str) -> str:
     """Restore host URL and credentials from placeholders."""
     return _ph.restore_from_storage(text, HOST, USER_EMAIL, USER_PASSWORD)
@@ -136,7 +141,7 @@ def _observation_text(obs: str | dict[str, str]) -> str:
 
 def load_knowledge_index() -> list[dict[str, Any]]:
     """Read all goal summaries and their referenced task files into a knowledge index."""
-    return _kn.load_knowledge_index(GOAL_SUMMARIES_DIR, TASKS_DIR, _restore_from_storage)
+    return _kn.load_knowledge_index(GOAL_SUMMARIES_DIR, TASKS_DIR, _restore_host_only)
 
 
 def find_relevant_knowledge(
@@ -158,8 +163,8 @@ def decompose_task(
 ) -> list[dict[str, str]]:
     """Use an LLM to decompose a free-form task into ordered execution phases."""
     return _dc.decompose_task(
-        prompt, HOST, USER_EMAIL, USER_PASSWORD,
-        TASKS_DIR, summary_client, _restore_from_storage,
+        prompt, HOST,
+        TASKS_DIR, summary_client, _restore_host_only,
         knowledge_match=knowledge_match,
     )
 
@@ -255,7 +260,7 @@ async def run_phase(
 
 def load_goal_summary(goal_path: Path) -> tuple[str, str, list[dict[str, str]]]:
     """Load a goal summary JSON and reconstruct the prompt, task name, and phases."""
-    return _gl.load_goal_summary(goal_path, TASKS_DIR, _restore_from_storage)
+    return _gl.load_goal_summary(goal_path, TASKS_DIR, _restore_host_only)
 
 
 def list_goals() -> None:
