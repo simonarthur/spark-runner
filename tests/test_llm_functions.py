@@ -150,6 +150,24 @@ class TestDecomposeTask:
         assert "{USER_EMAIL}" in prompt_text
         assert "{USER_PASSWORD}" in prompt_text
 
+    def test_retries_on_truncated_response(self, mock_summary_client: MagicMock) -> None:
+        """When the LLM response is truncated (max_tokens), retry with more tokens."""
+        phases = [{"name": "Login", "task": "Log in"}]
+
+        truncated = MagicMock()
+        truncated.content = [MagicMock(text='[{"name": "Login", "task": "Log')]
+        truncated.stop_reason = "max_tokens"
+
+        complete = MagicMock()
+        complete.content = [MagicMock(text=json.dumps(phases))]
+        complete.stop_reason = "end_turn"
+
+        mock_summary_client.messages.create.side_effect = [truncated, complete]
+        result = spark_runner.decompose_task("Do a thing")
+        assert len(result) == 1
+        assert result[0]["name"] == "Login"
+        assert mock_summary_client.messages.create.call_count == 2
+
     def test_invalid_json_raises_value_error(self, mock_summary_client: MagicMock) -> None:
         """When the LLM returns non-JSON, a clear ValueError is raised."""
         mock_summary_client.messages.create.return_value = make_llm_response(

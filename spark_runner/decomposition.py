@@ -106,10 +106,7 @@ def decompose_task(
     if reuse_section:
         reuse_format = '\nFor reused phases, use: {"name": "Phase Name", "reuse": "filename.txt"}'
 
-    response: anthropic.types.Message = client.messages.create(
-        model=model_config.model,
-        max_tokens=model_config.max_tokens,
-        messages=[{"role": "user", "content": f"""You are a browser automation planner for SparkyAI ({host}).
+    prompt_content: str = f"""You are a browser automation planner for SparkyAI ({host}).
 
 Given a user's task description, decompose it into sequential phases that a browser automation agent will execute one at a time. Each phase shares the same browser session, so the next phase picks up where the previous one left off.
 
@@ -146,24 +143,44 @@ Return ONLY valid JSON — an array of objects with "name" and "task" keys.{reus
 ]
 BASE_URL is {host}
 User's task:
-{prompt}"""}],
-    )
-    text: str = response.content[0].text.strip()
-    # Strip markdown code fences (```json ... ```) that LLMs sometimes add
-    text = re.sub(r"^```(?:json)?\s*\n?", "", text)
-    text = re.sub(r"\n?```\s*$", "", text)
-    match: re.Match[str] | None = re.search(r"\[.*\]", text, re.DOTALL)
-    if match:
-        text = match.group(0)
-    try:
-        phases: list[dict[str, str]] = json.loads(text)
-    except json.JSONDecodeError as exc:
-        # Show what the LLM actually returned so the user can debug
-        preview = text[:500] if text else "(empty)"
-        raise ValueError(
-            f"LLM did not return valid JSON for task decomposition. "
-            f"Response preview:\n{preview}"
-        ) from exc
+{prompt}"""
+
+    # Retry with increasing max_tokens if the response is truncated
+    max_tokens = max(model_config.max_tokens, 8192)
+    max_attempts = 3
+    for attempt in range(max_attempts):
+        response: anthropic.types.Message = client.messages.create(
+            model=model_config.model,
+            max_tokens=max_tokens,
+            messages=[{"role": "user", "content": prompt_content}],
+        )
+        text: str = response.content[0].text.strip()
+
+        # Check if the response was truncated (hit max_tokens)
+        if response.stop_reason == "max_tokens" and attempt < max_attempts - 1:
+            max_tokens = min(max_tokens * 2, 32768)
+            print(f"  Decomposition response truncated, retrying with max_tokens={max_tokens}...")
+            continue
+
+        # Strip markdown code fences (```json ... ```) that LLMs sometimes add
+        text = re.sub(r"^```(?:json)?\s*\n?", "", text)
+        text = re.sub(r"\n?```\s*$", "", text)
+        match: re.Match[str] | None = re.search(r"\[.*\]", text, re.DOTALL)
+        if match:
+            text = match.group(0)
+        try:
+            phases: list[dict[str, str]] = json.loads(text)
+            break
+        except json.JSONDecodeError as exc:
+            if attempt < max_attempts - 1:
+                max_tokens = min(max_tokens * 2, 32768)
+                print(f"  Decomposition JSON parse failed, retrying with max_tokens={max_tokens}...")
+                continue
+            preview = text[:500] if text else "(empty)"
+            raise ValueError(
+                f"LLM did not return valid JSON for task decomposition. "
+                f"Response preview:\n{preview}"
+            ) from exc
 
     base_instructions: str = """
                     "- Log in if necessary.\n"

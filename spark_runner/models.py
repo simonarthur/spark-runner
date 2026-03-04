@@ -74,7 +74,9 @@ class SparkConfig:
                     model="claude-sonnet-4-5-20250929", max_tokens=2048
                 ),
                 # Used by orchestrator to break a goal into phases
-                "task_decomposition": ModelConfig(model="claude-sonnet-4-5-20250929"),
+                "task_decomposition": ModelConfig(
+                    model="claude-sonnet-4-5-20250929", max_tokens=16384
+                ),
                 # Used by orchestrator to classify observations
                 "classification": ModelConfig(model="claude-sonnet-4-5-20250929"),
                 # Used by orchestrator to find relevant prior knowledge
