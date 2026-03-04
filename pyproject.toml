@@ -18,6 +18,9 @@ dependencies = [
 [tool.setuptools.packages.find]
 include = ["spark_runner*"]
 
+[tool.setuptools.package-data]
+spark_runner = ["assets/*.png"]
+
 [project.scripts]
 spark-runner = "spark_runner.cli:cli"
 
