@@ -106,6 +106,15 @@ class TestDecomposeTask:
         assert len(result) == 2
         assert result[0]["name"] == "Login"
 
+    def test_strips_markdown_code_fences(self, mock_summary_client: MagicMock) -> None:
+        """LLMs sometimes wrap JSON in ```json ... ``` fences."""
+        phases = [{"name": "Login", "task": "Log in"}]
+        fenced = f"```json\n{json.dumps(phases, indent=2)}\n```"
+        mock_summary_client.messages.create.return_value = make_llm_response(fenced)
+        result = spark_runner.decompose_task("Do a thing")
+        assert len(result) == 1
+        assert result[0]["name"] == "Login"
+
     def test_reuse_loads_file(
         self, mock_summary_client: MagicMock, fake_tasks_dir: Path
     ) -> None:

@@ -149,6 +149,9 @@ User's task:
 {prompt}"""}],
     )
     text: str = response.content[0].text.strip()
+    # Strip markdown code fences (```json ... ```) that LLMs sometimes add
+    text = re.sub(r"^```(?:json)?\s*\n?", "", text)
+    text = re.sub(r"\n?```\s*$", "", text)
     match: re.Match[str] | None = re.search(r"\[.*\]", text, re.DOTALL)
     if match:
         text = match.group(0)
