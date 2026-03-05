@@ -191,7 +191,11 @@ async def run_phase(name, task, llm, browser):
 
 
 async def main():
-    browser = Browser(headless=False, keep_alive=True)
+    browser = Browser(
+        headless=False,
+        keep_alive=True,
+        args=["--disable-save-password-bubble"],
+    )
     #llm = ChatAnthropic(model="claude-sonnet-4-5-20250929", temperature=0.0)
     llm = ChatBrowserUse()
 

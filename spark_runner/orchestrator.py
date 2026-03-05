@@ -325,7 +325,11 @@ async def run_single(
 
     own_browser: bool = browser is None
     if browser is None:
-        browser = Browser(headless=config.headless, keep_alive=True)
+        browser = Browser(
+            headless=config.headless,
+            keep_alive=True,
+            args=["--disable-save-password-bubble"],
+        )
     llm: ChatBrowserUse = ChatBrowserUse()
 
     all_summaries: list[dict[str, str]] = []
@@ -615,7 +619,11 @@ async def run_multiple(
 
     browser: Browser | None = None
     if shared_session:
-        browser = Browser(headless=config.headless, keep_alive=True)
+        browser = Browser(
+            headless=config.headless,
+            keep_alive=True,
+            args=["--disable-save-password-bubble"],
+        )
 
     try:
         if parallel > 1 and not shared_session:
