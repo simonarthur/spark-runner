@@ -201,6 +201,60 @@ class TestGenerateReport:
         assert "No problems recorded" in problems_html
         assert "green-ok" in problems_html
 
+    def test_problems_page_shows_classified_errors(self, tmp_path: Path) -> None:
+        classify_data = {
+            "step": "classify_observations",
+            "response_text": json.dumps([
+                {"text": "Logout is unreliable", "severity": "error"},
+                {"text": "Element indices shifted", "severity": "warning"},
+                {"text": "Test infra gap: no email retrieval", "severity": "error"},
+            ]),
+        }
+        run_dir = _make_run_dir(tmp_path, problem_log_content="")
+        (run_dir / "llm_classify_observations.json").write_text(
+            json.dumps(classify_data)
+        )
+        generate_report(run_dir)
+        problems_html = (run_dir / "report" / "problems.html").read_text()
+
+        assert "Logout is unreliable" in problems_html
+        assert "no email retrieval" in problems_html
+        assert "Element indices shifted" not in problems_html
+        assert "Error Observations (2)" in problems_html
+        assert "No problems recorded" not in problems_html
+
+    def test_problems_page_shows_classified_errors_with_code_fences(self, tmp_path: Path) -> None:
+        classify_data = {
+            "step": "classify_observations",
+            "response_text": '```json\n[{"text": "Feature broken", "severity": "error"}]\n```',
+        }
+        run_dir = _make_run_dir(tmp_path, problem_log_content="")
+        (run_dir / "llm_classify_observations.json").write_text(
+            json.dumps(classify_data)
+        )
+        generate_report(run_dir)
+        problems_html = (run_dir / "report" / "problems.html").read_text()
+
+        assert "Feature broken" in problems_html
+        assert "Error Observations (1)" in problems_html
+
+    def test_problems_nav_enabled_with_classified_errors_only(self, tmp_path: Path) -> None:
+        classify_data = {
+            "step": "classify_observations",
+            "response_text": json.dumps([
+                {"text": "Something broke", "severity": "error"},
+            ]),
+        }
+        run_dir = _make_run_dir(tmp_path, problem_log_content="")
+        (run_dir / "llm_classify_observations.json").write_text(
+            json.dumps(classify_data)
+        )
+        generate_report(run_dir)
+        index_html = (run_dir / "report" / "index.html").read_text()
+
+        # Problems link should NOT be disabled
+        assert "problems.html\" class=\"active disabled\"" not in index_html
+
     def test_screenshots_page_references_relative_paths(self, tmp_path: Path) -> None:
         run_dir = _make_run_dir(
             tmp_path,

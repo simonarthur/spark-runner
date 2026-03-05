@@ -525,7 +525,26 @@ def _generate_problems_page(
         highlighted = _highlight_timestamps(raw)
         log_section = f"<pre>{highlighted}</pre>"
     else:
-        log_section = '<p class="green-ok">No problems recorded.</p>'
+        log_section = ""
+
+    # Classified error observations
+    error_obs = _load_classified_errors(run_dir)
+    if error_obs:
+        rows = "".join(
+            f"<tr><td>{_html_escape(text)}</td></tr>" for text in error_obs
+        )
+        obs_section = (
+            f"<h2>Error Observations ({len(error_obs)})</h2>\n"
+            f"<table><thead><tr><th>Observation</th></tr></thead>"
+            f"<tbody>{rows}</tbody></table>"
+        )
+    else:
+        obs_section = ""
+
+    if not log_section and not obs_section:
+        combined = '<p class="green-ok">No problems recorded.</p>'
+    else:
+        combined = log_section + obs_section
 
     # Screenshots from failed phases
     ss_sections: list[str] = []
@@ -541,7 +560,7 @@ def _generate_problems_page(
 
     ss_html = "\n".join(ss_sections) if ss_sections else ""
 
-    body = f"<h1>Problem Log</h1>\n{log_section}\n{ss_html}"
+    body = f"<h1>Problem Log</h1>\n{combined}\n{ss_html}"
     return _page("Problems", nav_html, body)
 
 
@@ -895,10 +914,39 @@ def _map_screenshots_to_phases(
     return result
 
 
+def _load_classified_errors(run_dir: Path) -> list[str]:
+    """Return observation texts classified as ``error`` severity.
+
+    Reads ``llm_classify_observations.json`` and extracts the response.
+    """
+    classify_path = run_dir / "llm_classify_observations.json"
+    if not classify_path.exists():
+        return []
+    try:
+        data = json.loads(classify_path.read_text())
+        raw = data.get("response_text", "")
+        # Strip markdown code fences if present
+        raw = raw.strip()
+        if raw.startswith("```"):
+            # Remove opening fence (e.g. ```json)
+            raw = raw.split("\n", 1)[1] if "\n" in raw else raw[3:]
+        if raw.endswith("```"):
+            raw = raw[: -3]
+        observations: list[dict[str, str]] = json.loads(raw.strip())
+        return [
+            o["text"] for o in observations
+            if o.get("severity") == "error"
+        ]
+    except (json.JSONDecodeError, OSError, KeyError, TypeError):
+        return []
+
+
 def _has_problems(run_dir: Path) -> bool:
-    """Return ``True`` if the problem log exists and is non-empty."""
+    """Return ``True`` if the problem log or classified errors exist."""
     p = run_dir / "problem_log.txt"
-    return p.exists() and p.stat().st_size > 0
+    if p.exists() and p.stat().st_size > 0:
+        return True
+    return len(_load_classified_errors(run_dir)) > 0
 
 
 def _highlight_timestamps(text: str) -> str:
