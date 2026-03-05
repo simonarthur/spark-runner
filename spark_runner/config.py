@@ -76,6 +76,7 @@ def build_config(
     update_summary: bool = True,
     update_tasks: bool = True,
     knowledge_reuse: bool = True,
+    regenerate_tasks: bool = False,
 ) -> SparkConfig:
     """Build a ``SparkConfig`` by merging YAML file, env vars, and CLI args.
 
@@ -162,6 +163,7 @@ def build_config(
         knowledge_reuse=knowledge_reuse,
         auto_close=auto_close,
         headless=headless,
+        regenerate_tasks=regenerate_tasks,
     )
     return config
 

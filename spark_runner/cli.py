@@ -252,6 +252,7 @@ def _validate_url(
 @click.option("--no-update-summary", is_flag=True, help="Don't update goal summaries")
 @click.option("--no-update-tasks", is_flag=True, help="Don't overwrite task files")
 @click.option("--no-knowledge-reuse", is_flag=True, help="Don't reuse prior knowledge")
+@click.option("--regenerate-tasks", is_flag=True, help="Re-decompose goal into fresh task files")
 @click.option("--auto-close", is_flag=True, help="Close browser automatically")
 @click.option("--headless", is_flag=True, help="Run browser in headless mode")
 @click.option("--credential-profile", default=None, help="Credential profile name")
@@ -269,6 +270,7 @@ def run(
     no_update_summary: bool,
     no_update_tasks: bool,
     no_knowledge_reuse: bool,
+    regenerate_tasks: bool,
     auto_close: bool,
     headless: bool,
     credential_profile: str | None,
@@ -295,6 +297,7 @@ def run(
         update_summary=not no_update_summary,
         update_tasks=not no_update_tasks,
         knowledge_reuse=not no_knowledge_reuse,
+        regenerate_tasks=regenerate_tasks,
     )
     config.ensure_dirs()
 

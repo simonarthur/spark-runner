@@ -84,6 +84,101 @@ class TestRunSingleEmptySubtasks:
             assert mock_decompose.call_args.args[0] == "Test user sign-up"
 
 
+class TestRegenerateTasks:
+    """Tests for the --regenerate-tasks flag."""
+
+    @pytest.mark.asyncio
+    async def test_regenerate_tasks_true_calls_decompose(
+        self, tmp_path: Path, _minimal_config: SparkConfig,
+    ) -> None:
+        """When regenerate_tasks=True and goal has subtasks, decompose_task should be called."""
+        config = _minimal_config
+        config.regenerate_tasks = True
+
+        # Create a task file so load_goal_summary returns phases
+        tasks_dir = config.tasks_dir
+        assert tasks_dir is not None
+        (tasks_dir / "fill-form.txt").write_text("Fill the form")
+
+        goal_file = config.goal_summaries_dir / "signup-task.json"
+        goal_data: dict[str, Any] = {
+            "main_task": "Test user sign-up",
+            "key_observations": [],
+            "subtasks": [
+                {"phase_name": "Fill form", "filename": "fill-form.txt"},
+            ],
+        }
+        goal_file.write_text(json.dumps(goal_data))
+
+        task = TaskSpec(goal_path=goal_file)
+
+        with (
+            patch("spark_runner.orchestrator.decompose_task") as mock_decompose,
+            patch("spark_runner.orchestrator.run_phase", new_callable=AsyncMock) as mock_run_phase,
+            patch("spark_runner.orchestrator.summarize_phase") as mock_summarize,
+            patch("spark_runner.orchestrator.Browser") as mock_browser_cls,
+            patch("spark_runner.orchestrator.ChatBrowserUse"),
+            patch("spark_runner.orchestrator.generate_report"),
+        ):
+            mock_browser_cls.return_value.stop = AsyncMock()
+            mock_decompose.return_value = [
+                {"name": "Fill form", "task": "Fill out the sign-up form"},
+            ]
+            mock_run_phase.return_value = (True, MagicMock(action_results=MagicMock(return_value=[])), [])
+            mock_summarize.return_value = "Filled the form successfully"
+
+            from spark_runner.orchestrator import run_single
+
+            mock_client = MagicMock()
+            await run_single(task, config, client=mock_client)
+
+            mock_decompose.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_regenerate_tasks_false_skips_decompose(
+        self, tmp_path: Path, _minimal_config: SparkConfig,
+    ) -> None:
+        """When regenerate_tasks=False (default) and goal has subtasks, decompose_task should NOT be called."""
+        config = _minimal_config
+        config.regenerate_tasks = False
+
+        # Create a task file so load_goal_summary returns phases
+        tasks_dir = config.tasks_dir
+        assert tasks_dir is not None
+        (tasks_dir / "fill-form.txt").write_text("Fill the form")
+
+        goal_file = config.goal_summaries_dir / "signup-task.json"
+        goal_data: dict[str, Any] = {
+            "main_task": "Test user sign-up",
+            "key_observations": [],
+            "subtasks": [
+                {"phase_name": "Fill form", "filename": "fill-form.txt"},
+            ],
+        }
+        goal_file.write_text(json.dumps(goal_data))
+
+        task = TaskSpec(goal_path=goal_file)
+
+        with (
+            patch("spark_runner.orchestrator.decompose_task") as mock_decompose,
+            patch("spark_runner.orchestrator.run_phase", new_callable=AsyncMock) as mock_run_phase,
+            patch("spark_runner.orchestrator.summarize_phase") as mock_summarize,
+            patch("spark_runner.orchestrator.Browser") as mock_browser_cls,
+            patch("spark_runner.orchestrator.ChatBrowserUse"),
+            patch("spark_runner.orchestrator.generate_report"),
+        ):
+            mock_browser_cls.return_value.stop = AsyncMock()
+            mock_run_phase.return_value = (True, MagicMock(action_results=MagicMock(return_value=[])), [])
+            mock_summarize.return_value = "Filled the form successfully"
+
+            from spark_runner.orchestrator import run_single
+
+            mock_client = MagicMock()
+            await run_single(task, config, client=mock_client)
+
+            mock_decompose.assert_not_called()
+
+
 class TestCopyGoalFiles:
     """Tests for _copy_goal_files() helper."""
 

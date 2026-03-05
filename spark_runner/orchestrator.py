@@ -303,6 +303,10 @@ async def run_single(
         print("  No other goals to learn from")
 
     # --- Decomposition (run_dir available) ---
+    if not phases or config.regenerate_tasks:
+        if phases and config.regenerate_tasks:
+            print("Regenerating tasks (ignoring existing subtasks)...")
+            phases = []
     if not phases:
         print()
         print("Decomposing task into phases...")

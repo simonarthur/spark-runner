@@ -50,6 +50,7 @@ class SparkConfig:
     update_summary: bool = True
     update_tasks: bool = True
     knowledge_reuse: bool = True
+    regenerate_tasks: bool = False
     auto_close: bool = False
     headless: bool = False
     classification_rules_path: Path = field(
