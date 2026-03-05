@@ -392,6 +392,7 @@ def _render_pipeline_timeline(pipeline: list[dict[str, Any]], detail: RunDetail 
                 if phase_name_to_slug(p.name) == phase_slug:
                     phase_anchor = f'phases.html#phase-{pi}'
                     links.append(f'<a href="conversations.html#phase-{pi}">agent conversation</a>')
+                    links.append(f'<a href="agent_log.html#phase-{pi}">agent log</a>')
                     break
 
         links_html = f'<div class="step-links">{" ".join(links)}</div>' if links else ""
@@ -473,11 +474,19 @@ def _generate_phases_page(
         else:
             rendered = "<p><em>No summary available.</em></p>"
 
+        # Cross-links to related pages
+        phase_links = (
+            f'<p style="font-size:0.9rem">'
+            f'<a href="conversations.html#phase-{i}">View conversation</a>'
+            f' | <a href="agent_log.html#phase-{i}">View agent log</a>'
+            f'</p>'
+        )
+
         # Screenshot thumbnails (from combined per-phase + task-level mapping)
         phase_screenshots = ss_map.get(phase.name, [])
         thumbs = _render_thumbnail_grid(phase_screenshots) if phase_screenshots else ""
 
-        sections.append(f"{heading}\n{rendered}\n{thumbs}")
+        sections.append(f"{heading}\n{phase_links}\n{rendered}\n{thumbs}")
 
     if not sections:
         sections.append("<p>No phases recorded.</p>")
@@ -570,8 +579,13 @@ def _generate_conversations_page(run_dir: Path, detail: RunDetail) -> str:
         else:
             turns = _parse_json_conversation(cf)
 
+        phase_link = (
+            f' <a href="phases.html#phase-{idx + 1}" style="font-size:0.85rem; font-weight:normal">'
+            f'view phase</a>'
+        ) if idx < len(phase_names) else ""
+
         sections.append(
-            f'<h2 id="phase-{idx + 1}">{_html_escape(phase_label)}</h2>\n'
+            f'<h2 id="phase-{idx + 1}">{_html_escape(phase_label)}{phase_link}</h2>\n'
             f"<p><em>File: {_html_escape(cf.name)}</em></p>\n"
             + "\n".join(turns)
         )
@@ -729,7 +743,7 @@ def _generate_agent_log_page(run_dir: Path, detail: RunDetail) -> str:
             # Lines without a recognised tag go to important
             important.append(line)
 
-        section_html = f'<h2>{_html_escape(heading)}</h2>\n'
+        section_html = f'<h2 id="phase-{idx + 1}">{_html_escape(heading)}</h2>\n'
 
         if important:
             highlighted_lines: list[str] = []

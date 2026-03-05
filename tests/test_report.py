@@ -155,6 +155,23 @@ class TestGenerateReport:
         assert "<strong>Bold text</strong>" in phases_html
         assert "<li>Item one</li>" in phases_html
 
+    def test_phases_page_links_to_conversations_and_agent_log(self, tmp_path: Path) -> None:
+        """Each phase on the Phases page should link to Conversations and Agent Log."""
+        run_dir = _make_run_dir(
+            tmp_path,
+            phases=[
+                {"name": "Login", "outcome": "SUCCESS", "screenshots": []},
+                {"name": "Search", "outcome": "SUCCESS", "screenshots": []},
+            ],
+        )
+        generate_report(run_dir)
+        phases_html = (run_dir / "report" / "phases.html").read_text()
+
+        assert 'conversations.html#phase-1' in phases_html
+        assert 'agent_log.html#phase-1' in phases_html
+        assert 'conversations.html#phase-2' in phases_html
+        assert 'agent_log.html#phase-2' in phases_html
+
     def test_events_page_contains_log_content(self, tmp_path: Path) -> None:
         run_dir = _make_run_dir(
             tmp_path,
@@ -602,6 +619,8 @@ class TestPipelineRendering:
 
         assert 'conversations.html#phase-1' in index_html
         assert "agent conversation" in index_html
+        assert 'agent_log.html#phase-1' in index_html
+        assert "agent log" in index_html
         # Phase name should link to the Phases page
         assert 'phases.html#phase-1' in index_html
 
@@ -645,6 +664,23 @@ class TestPipelineRendering:
 
         assert 'id="phase-1"' in conv_html
         assert 'id="phase-2"' in conv_html
+
+    def test_conversations_page_links_back_to_phases(self, tmp_path: Path) -> None:
+        """Conversation phase headings should link back to the Phases page."""
+        run_dir = _make_run_dir(
+            tmp_path,
+            phases=[
+                {"name": "Login", "outcome": "SUCCESS", "screenshots": []},
+            ],
+            conversation_files={
+                "conversation_aaaa_1.txt": " user \nHello\n assistant \nHi",
+            },
+        )
+        generate_report(run_dir)
+        conv_html = (run_dir / "report" / "conversations.html").read_text()
+
+        assert 'phases.html#phase-1' in conv_html
+        assert "view phase" in conv_html
 
 
 class TestHtmlEscape:
@@ -772,8 +808,22 @@ class TestAgentLogPage:
         generate_report(run_dir)
         html = (run_dir / "report" / "agent_log.html").read_text()
 
-        assert "<h2>Login</h2>" in html
-        assert "<h2>Search</h2>" in html
+        assert 'id="phase-1"' in html
+        assert "Login</h2>" in html
+        assert 'id="phase-2"' in html
+        assert "Search</h2>" in html
+
+    def test_phase_headings_have_anchor_ids(self, tmp_path: Path) -> None:
+        """Agent log phase headings should have id attributes for deep-linking."""
+        log = (
+            "2026-01-01 00:00:00,000 INFO     [Agent] Starting a browser-use agent\n"
+            "2026-01-01 00:00:01,000 INFO     [Agent] 📍 Step 1:\n"
+        )
+        run_dir = _make_run_dir(tmp_path, agent_log_content=log)
+        generate_report(run_dir)
+        html = (run_dir / "report" / "agent_log.html").read_text()
+
+        assert '<h2 id="phase-1">' in html
 
     def test_bubus_lines_collapsed(self, tmp_path: Path) -> None:
         """[bubus] lines should be inside a <details> block."""
