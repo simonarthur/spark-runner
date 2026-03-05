@@ -209,8 +209,12 @@ _PAGE_NAMES: list[tuple[str, str]] = [
 
 
 def _nav(active: str, has_problems: bool) -> str:
-    """Build the horizontal nav bar."""
-    parts: list[str] = []
+    """Build the horizontal nav bar.
+
+    Includes a leading link back to the master Run Reports index
+    (``../../../index.html`` relative to the ``report/`` directory).
+    """
+    parts: list[str] = ['<a href="../../../index.html">\u2190 Run Reports</a>']
     for filename, label in _PAGE_NAMES:
         classes: list[str] = []
         if filename == active:

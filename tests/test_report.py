@@ -678,6 +678,13 @@ class TestMarkdownToHtml:
         assert "agent_log.html" in nav_html
         assert "screenshots.html" in nav_html
 
+    def test_nav_links_to_runs_index(self) -> None:
+        """Nav bar should include a link back to the master Run Reports index."""
+        from spark_runner.report import _nav
+        nav_html = _nav("index.html", has_problems=True)
+        assert "../../../index.html" in nav_html
+        assert "Run Reports" in nav_html
+
     def test_nav_disables_problems_when_empty(self) -> None:
         from spark_runner.report import _nav
         nav_html = _nav("index.html", has_problems=False)
