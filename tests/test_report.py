@@ -1186,6 +1186,14 @@ class TestGenerateRunsIndex:
         assert "<script>" in html
         assert "sort" in html.lower()
 
+    def test_default_sort_by_datetime_descending(self, tmp_path: Path) -> None:
+        """The JS should default-sort by Run Datetime (col 2) descending."""
+        runs_dir = _make_runs_dir(tmp_path)
+        generate_runs_index(runs_dir)
+        html = (runs_dir / "index.html").read_text()
+
+        assert "sortByCol(2, false)" in html
+
     def test_empty_runs_no_sortable_headers(self, tmp_path: Path) -> None:
         """When there are no runs, the table (and sortable headers) should not appear."""
         runs_dir = _make_runs_dir(tmp_path, runs=[])

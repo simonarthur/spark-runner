@@ -1299,31 +1299,33 @@ def _runs_index_js() -> str:
   if (!table) return;
   var headers = table.querySelectorAll("th.sortable");
   var sortState = {col: -1, asc: true};
+  function sortByCol(idx, asc) {
+    sortState.col = idx;
+    sortState.asc = asc;
+    var tbody = table.querySelector("tbody");
+    var rows = Array.from(tbody.querySelectorAll("tr"));
+    rows.sort(function(a, b) {
+      var av = a.cells[idx].getAttribute("data-sort-value") || "";
+      var bv = b.cells[idx].getAttribute("data-sort-value") || "";
+      var cmp = av.localeCompare(bv);
+      return sortState.asc ? cmp : -cmp;
+    });
+    rows.forEach(function(r) { tbody.appendChild(r); });
+    headers.forEach(function(h) {
+      var arrow = h.querySelector(".sort-arrow");
+      if (arrow) arrow.textContent = "";
+    });
+    var arrow = headers[idx].querySelector(".sort-arrow");
+    if (arrow) arrow.textContent = sortState.asc ? "\\u25B2" : "\\u25BC";
+  }
   headers.forEach(function(th, idx) {
     th.addEventListener("click", function() {
-      if (sortState.col === idx) {
-        sortState.asc = !sortState.asc;
-      } else {
-        sortState.col = idx;
-        sortState.asc = true;
-      }
-      var tbody = table.querySelector("tbody");
-      var rows = Array.from(tbody.querySelectorAll("tr"));
-      rows.sort(function(a, b) {
-        var av = a.cells[idx].getAttribute("data-sort-value") || "";
-        var bv = b.cells[idx].getAttribute("data-sort-value") || "";
-        var cmp = av.localeCompare(bv);
-        return sortState.asc ? cmp : -cmp;
-      });
-      rows.forEach(function(r) { tbody.appendChild(r); });
-      headers.forEach(function(h) {
-        var arrow = h.querySelector(".sort-arrow");
-        if (arrow) arrow.textContent = "";
-      });
-      var arrow = th.querySelector(".sort-arrow");
-      if (arrow) arrow.textContent = sortState.asc ? "\\u25B2" : "\\u25BC";
+      var asc = (sortState.col === idx) ? !sortState.asc : true;
+      sortByCol(idx, asc);
     });
   });
+  // Default sort: Run Datetime (column 2) descending (most recent first)
+  sortByCol(2, false);
 })();
 """
 
