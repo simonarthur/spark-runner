@@ -307,6 +307,61 @@ class TestRunGoalFileValidation:
         assert result.exit_code != 0
         assert "Goal file not found" in result.output
 
+    @patch("spark_runner.cli.build_config")
+    def test_close_match_shows_did_you_mean(
+        self,
+        mock_config: MagicMock,
+        runner: click.testing.CliRunner,
+        tmp_path: Path,
+    ) -> None:
+        """A misspelled goal name suggests close matches."""
+        gs_dir = tmp_path / "goal_summaries"
+        gs_dir.mkdir()
+        (gs_dir / "login-task.json").write_text("{}")
+        (gs_dir / "checkout-task.json").write_text("{}")
+        mock_cfg = MagicMock(base_url="https://x.com", goal_summaries_dir=gs_dir)
+        mock_config.return_value = mock_cfg
+        result = runner.invoke(cli, ["run", "logn-task"])
+        assert result.exit_code != 0
+        assert "Did you mean" in result.output
+        assert "login-task" in result.output
+
+    @patch("spark_runner.cli.build_config")
+    def test_no_close_match_shows_available_goals(
+        self,
+        mock_config: MagicMock,
+        runner: click.testing.CliRunner,
+        tmp_path: Path,
+    ) -> None:
+        """A completely unrelated name lists all available goals."""
+        gs_dir = tmp_path / "goal_summaries"
+        gs_dir.mkdir()
+        (gs_dir / "checkout-task.json").write_text("{}")
+        mock_cfg = MagicMock(base_url="https://x.com", goal_summaries_dir=gs_dir)
+        mock_config.return_value = mock_cfg
+        result = runner.invoke(cli, ["run", "zzzzz"])
+        assert result.exit_code != 0
+        assert "Available goals" in result.output
+        assert "checkout-task.json" in result.output
+
+    @patch("spark_runner.cli.build_config")
+    def test_no_goals_at_all_no_suggestions(
+        self,
+        mock_config: MagicMock,
+        runner: click.testing.CliRunner,
+        tmp_path: Path,
+    ) -> None:
+        """An empty goal dir shows no suggestions section."""
+        gs_dir = tmp_path / "goal_summaries"
+        gs_dir.mkdir()
+        mock_cfg = MagicMock(base_url="https://x.com", goal_summaries_dir=gs_dir)
+        mock_config.return_value = mock_cfg
+        result = runner.invoke(cli, ["run", "anything"])
+        assert result.exit_code != 0
+        assert "Goal file not found" in result.output
+        assert "Did you mean" not in result.output
+        assert "Available goals" not in result.output
+
 
 # ── run: --model validation ──────────────────────────────────────────────
 

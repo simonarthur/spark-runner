@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import sys
+from difflib import get_close_matches
 from pathlib import Path
 from typing import Any
 
@@ -46,8 +47,36 @@ def _resolve_goal_file(name: str, goal_summaries_dir: Path | None) -> Path:
         if with_ext.exists():
             return with_ext
 
+    # Collect available goal names for suggestions
+    hint = ""
+    if goal_summaries_dir is not None and goal_summaries_dir.exists():
+        available = [
+            f.name for f in sorted(goal_summaries_dir.iterdir())
+            if f.is_file() and f.suffix == ".json"
+        ]
+        stems = [
+            f.stem for f in sorted(goal_summaries_dir.iterdir())
+            if f.is_file() and f.suffix == ".json"
+        ]
+        candidates = available + stems
+        close = get_close_matches(name, candidates, n=3, cutoff=0.6)
+        if close:
+            # Deduplicate (e.g. "foo.json" and "foo" might both match)
+            seen: set[str] = set()
+            unique: list[str] = []
+            for c in close:
+                key = c.removesuffix(".json")
+                if key not in seen:
+                    seen.add(key)
+                    unique.append(c)
+            listing = "\n".join(f"  {c}" for c in unique)
+            hint = f"\n\nDid you mean:\n{listing}"
+        elif available:
+            listing = "\n".join(f"  {n}" for n in available)
+            hint = f"\n\nAvailable goals:\n{listing}"
+
     raise click.BadParameter(
-        f"Goal file not found: {name}",
+        f"Goal file not found: {name}{hint}",
         param_hint="'GOAL_FILES'",
     )
 
