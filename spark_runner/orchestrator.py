@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -90,6 +91,26 @@ def _make_sanitize_fn(config: SparkConfig) -> Any:
     def _sanitize(text: str) -> str:
         return sanitize_for_storage(text, config.base_url, cred.email, cred.password)
     return _sanitize
+
+
+def _make_browser(*, headless: bool, keep_alive: bool = True) -> Browser:
+    """Create a ``Browser`` with Chrome password-manager popups disabled.
+
+    Writes a ``Preferences`` file into a fresh temp profile directory so
+    Chrome never offers to save passwords.
+    """
+    user_data_dir = Path(tempfile.mkdtemp(prefix="browser-use-user-data-dir-"))
+    prefs_dir = user_data_dir / "Default"
+    prefs_dir.mkdir(parents=True, exist_ok=True)
+    (prefs_dir / "Preferences").write_text(json.dumps({
+        "credentials_enable_service": False,
+        "profile": {"password_manager_enabled": False},
+    }))
+    return Browser(
+        headless=headless,
+        keep_alive=keep_alive,
+        user_data_dir=str(user_data_dir),
+    )
 
 
 async def run_single(
@@ -325,11 +346,7 @@ async def run_single(
 
     own_browser: bool = browser is None
     if browser is None:
-        browser = Browser(
-            headless=config.headless,
-            keep_alive=True,
-            args=["--disable-features=PasswordManager"],
-        )
+        browser = _make_browser(headless=config.headless)
     llm: ChatBrowserUse = ChatBrowserUse()
 
     all_summaries: list[dict[str, str]] = []
@@ -619,11 +636,7 @@ async def run_multiple(
 
     browser: Browser | None = None
     if shared_session:
-        browser = Browser(
-            headless=config.headless,
-            keep_alive=True,
-            args=["--disable-features=PasswordManager"],
-        )
+        browser = _make_browser(headless=config.headless)
 
     try:
         if parallel > 1 and not shared_session:

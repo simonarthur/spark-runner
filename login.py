@@ -1,5 +1,7 @@
 import asyncio
+import json
 import sys
+import tempfile
 from pathlib import Path
 from dotenv import load_dotenv
 import anthropic
@@ -191,10 +193,17 @@ async def run_phase(name, task, llm, browser):
 
 
 async def main():
+    user_data_dir = Path(tempfile.mkdtemp(prefix="browser-use-user-data-dir-"))
+    prefs_dir = user_data_dir / "Default"
+    prefs_dir.mkdir(parents=True, exist_ok=True)
+    (prefs_dir / "Preferences").write_text(json.dumps({
+        "credentials_enable_service": False,
+        "profile": {"password_manager_enabled": False},
+    }))
     browser = Browser(
         headless=False,
         keep_alive=True,
-        args=["--disable-features=PasswordManager"],
+        user_data_dir=str(user_data_dir),
     )
     #llm = ChatAnthropic(model="claude-sonnet-4-5-20250929", temperature=0.0)
     llm = ChatBrowserUse()
