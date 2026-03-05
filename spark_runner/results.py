@@ -42,6 +42,7 @@ class RunDetail:
     base_url: str = ""
     credential_profile: str = ""
     run_dir: Path = field(default_factory=lambda: Path())
+    goal_file: str | None = None
     phases: list[PhaseDetail] = field(default_factory=list)
     screenshots: list[ScreenshotRecord] = field(default_factory=list)
     pipeline: list[dict[str, Any]] = field(default_factory=list)
@@ -131,6 +132,7 @@ def get_run_detail(run_dir: Path) -> RunDetail:
             detail.timestamp = meta.get("timestamp", "")
             detail.base_url = meta.get("base_url", "")
             detail.credential_profile = meta.get("credential_profile", "")
+            detail.goal_file = meta.get("goal_file")
 
             for phase_data in meta.get("phases", []):
                 screenshots: list[ScreenshotRecord] = []
@@ -230,6 +232,7 @@ def write_run_metadata(
     credential_profile: str,
     phases: list[dict[str, Any]],
     screenshots: list[ScreenshotRecord] | None = None,
+    goal_file: str | None = None,
 ) -> None:
     """Write run_metadata.json to the run directory.
 
@@ -241,6 +244,7 @@ def write_run_metadata(
         credential_profile: Credential profile used.
         phases: List of phase dicts with name, outcome, and screenshots.
         screenshots: Optional task-level screenshots.
+        goal_file: Optional goal filename (e.g. ``task-name-task.json``).
     """
     metadata: dict[str, Any] = {
         "task_name": task_name,
@@ -251,6 +255,8 @@ def write_run_metadata(
         "phases": [],
         "screenshots": [],
     }
+    if goal_file is not None:
+        metadata["goal_file"] = goal_file
 
     for phase in phases:
         phase_entry: dict[str, Any] = {
