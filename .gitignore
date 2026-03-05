@@ -8,3 +8,4 @@ runs/
 archive/
 goal_summaries/
 tasks/
+spark_runner_data/
