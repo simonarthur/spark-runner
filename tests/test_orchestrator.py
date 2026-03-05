@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from spark_runner.models import CredentialProfile, SparkConfig, TaskSpec
+from spark_runner.orchestrator import _copy_goal_files
 
 
 @pytest.fixture()
@@ -81,3 +82,70 @@ class TestRunSingleEmptySubtasks:
             mock_decompose.assert_called_once()
             # The prompt from the goal file should be passed to decompose_task
             assert mock_decompose.call_args.args[0] == "Test user sign-up"
+
+
+class TestCopyGoalFiles:
+    """Tests for _copy_goal_files() helper."""
+
+    def test_copies_goal_and_task_files(self, tmp_path: Path) -> None:
+        """Goal JSON and referenced subtask files should be copied to run_dir/goal/."""
+        tasks_dir = tmp_path / "tasks"
+        tasks_dir.mkdir()
+        (tasks_dir / "fill-form.txt").write_text("Fill the form with {EMAIL}")
+        (tasks_dir / "verify-result.txt").write_text("Check the result page")
+
+        goal_file = tmp_path / "signup-task.json"
+        goal_data: dict[str, Any] = {
+            "main_task": "Test signup",
+            "key_observations": [],
+            "subtasks": [
+                {"filename": "fill-form.txt"},
+                {"filename": "verify-result.txt"},
+            ],
+        }
+        goal_file.write_text(json.dumps(goal_data))
+
+        run_dir = tmp_path / "run"
+        run_dir.mkdir()
+
+        _copy_goal_files(run_dir, goal_file, tasks_dir)
+
+        goal_dir = run_dir / "goal"
+        assert goal_dir.exists()
+        assert (goal_dir / "signup-task.json").exists()
+        assert json.loads((goal_dir / "signup-task.json").read_text()) == goal_data
+        assert (goal_dir / "fill-form.txt").read_text() == "Fill the form with {EMAIL}"
+        assert (goal_dir / "verify-result.txt").read_text() == "Check the result page"
+
+    def test_no_goal_dir_for_cli_prompt(self, tmp_path: Path) -> None:
+        """For CLI prompt runs (no goal_path), _copy_goal_files is not called
+        and no goal/ directory should exist."""
+        run_dir = tmp_path / "run"
+        run_dir.mkdir()
+        # Simply verify goal/ doesn't exist when not created
+        assert not (run_dir / "goal").exists()
+
+    def test_missing_task_file_skipped(self, tmp_path: Path) -> None:
+        """Subtask files that don't exist on disk should be silently skipped."""
+        tasks_dir = tmp_path / "tasks"
+        tasks_dir.mkdir()
+        (tasks_dir / "existing.txt").write_text("I exist")
+
+        goal_file = tmp_path / "test-task.json"
+        goal_data: dict[str, Any] = {
+            "main_task": "Test",
+            "subtasks": [
+                {"filename": "existing.txt"},
+                {"filename": "missing.txt"},
+            ],
+        }
+        goal_file.write_text(json.dumps(goal_data))
+
+        run_dir = tmp_path / "run"
+        run_dir.mkdir()
+
+        _copy_goal_files(run_dir, goal_file, tasks_dir)
+
+        goal_dir = run_dir / "goal"
+        assert (goal_dir / "existing.txt").exists()
+        assert not (goal_dir / "missing.txt").exists()

@@ -96,6 +96,7 @@ def _make_run_dir(
 
 _EXPECTED_FILES = [
     "index.html",
+    "goal.html",
     "pipeline.html",
     "phases.html",
     "events.html",
@@ -737,6 +738,127 @@ class TestPipelineRendering:
         assert "view phase" in conv_html
 
 
+class TestGoalPage:
+    """Tests for the Goal HTML page."""
+
+    def test_cli_prompt_run_shows_prompt(self, tmp_path: Path) -> None:
+        """When no goal/ directory exists, the Goal page should show the prompt."""
+        run_dir = _make_run_dir(tmp_path, prompt="Search for products")
+        generate_report(run_dir)
+        goal_html = (run_dir / "report" / "goal.html").read_text()
+
+        assert "Search for products" in goal_html
+        assert "CLI prompt" in goal_html
+        assert "no goal file" in goal_html
+
+    def test_goal_file_displays_main_task(self, tmp_path: Path) -> None:
+        """When goal/ directory exists with a goal JSON, the main task is shown."""
+        run_dir = _make_run_dir(tmp_path, task_name="signup-test")
+        goal_dir = run_dir / "goal"
+        goal_dir.mkdir()
+        goal_data = {
+            "main_task": "Test user sign-up flow",
+            "key_observations": [
+                {"text": "Form validation works", "severity": "warning"},
+                {"text": "Email not sent", "severity": "error"},
+            ],
+            "subtasks": [],
+        }
+        (goal_dir / "signup-test-task.json").write_text(json.dumps(goal_data))
+        generate_report(run_dir)
+        goal_html = (run_dir / "report" / "goal.html").read_text()
+
+        assert "Test user sign-up flow" in goal_html
+        assert "Form validation works" in goal_html
+        assert "Email not sent" in goal_html
+        assert "badge-fail" in goal_html  # error severity
+        assert "badge-success" in goal_html  # warning severity
+
+    def test_subtask_files_in_collapsible_sections(self, tmp_path: Path) -> None:
+        """Subtask .txt files should appear in collapsible <details> sections."""
+        run_dir = _make_run_dir(tmp_path, task_name="login-test")
+        goal_dir = run_dir / "goal"
+        goal_dir.mkdir()
+        goal_data = {
+            "main_task": "Test login",
+            "key_observations": [],
+            "subtasks": [
+                {"filename": "fill-form.txt"},
+                {"filename": "verify-dashboard.txt"},
+            ],
+        }
+        (goal_dir / "login-test-task.json").write_text(json.dumps(goal_data))
+        (goal_dir / "fill-form.txt").write_text("# Fill Form\n\nEnter **credentials** and submit.")
+        (goal_dir / "verify-dashboard.txt").write_text("- Check welcome message\n- Check sidebar")
+
+        generate_report(run_dir)
+        goal_html = (run_dir / "report" / "goal.html").read_text()
+
+        assert "<details>" in goal_html
+        assert "fill-form.txt" in goal_html
+        assert "verify-dashboard.txt" in goal_html
+        # Markdown should be rendered
+        assert "<strong>credentials</strong>" in goal_html
+        assert "<li>Check welcome message</li>" in goal_html
+        assert 'id="subtasks"' in goal_html
+
+    def test_goal_page_in_nav(self, tmp_path: Path) -> None:
+        """Goal page should appear in the nav bar."""
+        from spark_runner.report import _nav
+        nav_html = _nav("goal.html", has_problems=True)
+        assert "goal.html" in nav_html
+        assert "Goal" in nav_html
+        assert 'class="active"' in nav_html
+
+
+class TestGoalPipelineLinks:
+    """Tests for pipeline step links to the Goal page."""
+
+    def test_goal_source_links_to_goal_page(self, tmp_path: Path) -> None:
+        """Goal Source pipeline step should have a 'view goal' link."""
+        pipeline = [
+            {
+                "name": "Goal Source",
+                "step_type": "goal_source",
+                "status": "completed",
+                "summary": "Goal file: my-goal-task.json",
+                "conversation_file": None,
+            },
+        ]
+        run_dir = _make_run_dir(
+            tmp_path,
+            phases=[{"name": "Login", "outcome": "SUCCESS", "screenshots": []}],
+            pipeline=pipeline,
+        )
+        generate_report(run_dir)
+        index_html = (run_dir / "report" / "index.html").read_text()
+
+        assert 'goal.html' in index_html
+        assert 'view goal' in index_html
+
+    def test_phases_loaded_links_to_subtasks(self, tmp_path: Path) -> None:
+        """Phases Loaded pipeline step should link to goal.html#subtasks."""
+        pipeline = [
+            {
+                "name": "Phases Loaded",
+                "step_type": "phases_loaded",
+                "status": "completed",
+                "summary": "3 phases from goal file",
+                "conversation_file": None,
+            },
+        ]
+        run_dir = _make_run_dir(
+            tmp_path,
+            phases=[{"name": "Login", "outcome": "SUCCESS", "screenshots": []}],
+            pipeline=pipeline,
+        )
+        generate_report(run_dir)
+        index_html = (run_dir / "report" / "index.html").read_text()
+
+        assert 'goal.html#subtasks' in index_html
+        assert 'view task files' in index_html
+
+
 class TestHtmlEscape:
     def test_escapes_angle_brackets(self) -> None:
         assert _html_escape("<script>") == "&lt;script&gt;"
@@ -780,10 +902,11 @@ class TestMarkdownToHtml:
         assert "&lt;script&gt;" in result
 
     def test_nav_links_all_pages(self) -> None:
-        """Verify all 8 pages appear in the nav bar."""
+        """Verify all 9 pages appear in the nav bar."""
         from spark_runner.report import _nav
         nav_html = _nav("index.html", has_problems=True)
         assert "index.html" in nav_html
+        assert "goal.html" in nav_html
         assert "pipeline.html" in nav_html
         assert "phases.html" in nav_html
         assert "events.html" in nav_html
