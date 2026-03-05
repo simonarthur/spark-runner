@@ -30,6 +30,7 @@ def _make_run_dir(
     conversation_files: dict[str, object] | None = None,
     pipeline: list[dict[str, object]] | None = None,
     llm_files: dict[str, object] | None = None,
+    agent_log_content: str = "",
 ) -> Path:
     """Create a synthetic run directory under *tmp_path*."""
     run_dir = tmp_path / task_name / "2025-01-01T00-00-00"
@@ -87,6 +88,9 @@ def _make_run_dir(
         for fname, data in llm_files.items():
             (run_dir / fname).write_text(json.dumps(data))
 
+    if agent_log_content:
+        (run_dir / "agent_log.txt").write_text(agent_log_content)
+
     return run_dir
 
 
@@ -97,6 +101,7 @@ _EXPECTED_FILES = [
     "events.html",
     "problems.html",
     "conversations.html",
+    "agent_log.html",
     "screenshots.html",
 ]
 
@@ -661,7 +666,7 @@ class TestMarkdownToHtml:
         assert "&lt;script&gt;" in result
 
     def test_nav_links_all_pages(self) -> None:
-        """Verify all 7 pages appear in the nav bar."""
+        """Verify all 8 pages appear in the nav bar."""
         from spark_runner.report import _nav
         nav_html = _nav("index.html", has_problems=True)
         assert "index.html" in nav_html
@@ -670,12 +675,89 @@ class TestMarkdownToHtml:
         assert "events.html" in nav_html
         assert "problems.html" in nav_html
         assert "conversations.html" in nav_html
+        assert "agent_log.html" in nav_html
         assert "screenshots.html" in nav_html
 
     def test_nav_disables_problems_when_empty(self) -> None:
         from spark_runner.report import _nav
         nav_html = _nav("index.html", has_problems=False)
         assert "disabled" in nav_html
+
+
+class TestAgentLogPage:
+    """Tests for the Agent Log HTML page."""
+
+    def test_no_agent_log_file(self, tmp_path: Path) -> None:
+        """When agent_log.txt is missing, show a fallback message."""
+        run_dir = _make_run_dir(tmp_path)
+        generate_report(run_dir)
+        html = (run_dir / "report" / "agent_log.html").read_text()
+
+        assert "No agent log found" in html
+
+    def test_renders_step_markers(self, tmp_path: Path) -> None:
+        """📍 Step lines should be highlighted with the agent-step class."""
+        log = (
+            "2026-01-01 00:00:00,000 INFO     [Agent] Starting a browser-use agent with version 0.12.1\n"
+            "2026-01-01 00:00:01,000 INFO     [Agent] 📍 Step 1:\n"
+            "2026-01-01 00:00:02,000 INFO     [Agent]   🧠 Memory: remembering things\n"
+        )
+        run_dir = _make_run_dir(tmp_path, agent_log_content=log)
+        generate_report(run_dir)
+        html = (run_dir / "report" / "agent_log.html").read_text()
+
+        assert "agent-step" in html
+        assert "agent-memory" in html
+
+    def test_strips_ansi_codes(self, tmp_path: Path) -> None:
+        """ANSI escape sequences should be removed from the output."""
+        log = (
+            "2026-01-01 00:00:00,000 INFO     [Agent] Starting a browser-use agent\n"
+            "2026-01-01 00:00:01,000 INFO     [Agent]   \x1b[34m▶️  navigate\x1b[0m\n"
+        )
+        run_dir = _make_run_dir(tmp_path, agent_log_content=log)
+        generate_report(run_dir)
+        html = (run_dir / "report" / "agent_log.html").read_text()
+
+        assert "\x1b[" not in html
+        assert "navigate" in html
+
+    def test_splits_by_phase(self, tmp_path: Path) -> None:
+        """Multiple agent sessions should produce separate <h2> sections."""
+        log = (
+            "2026-01-01 00:00:00,000 INFO     [Agent] Starting a browser-use agent\n"
+            "2026-01-01 00:00:01,000 INFO     [Agent] 📍 Step 1:\n"
+            "2026-01-01 00:00:10,000 INFO     [Agent] Starting a browser-use agent\n"
+            "2026-01-01 00:00:11,000 INFO     [Agent] 📍 Step 1:\n"
+        )
+        run_dir = _make_run_dir(
+            tmp_path,
+            phases=[
+                {"name": "Login", "outcome": "SUCCESS", "screenshots": []},
+                {"name": "Search", "outcome": "SUCCESS", "screenshots": []},
+            ],
+            agent_log_content=log,
+        )
+        generate_report(run_dir)
+        html = (run_dir / "report" / "agent_log.html").read_text()
+
+        assert "<h2>Login</h2>" in html
+        assert "<h2>Search</h2>" in html
+
+    def test_bubus_lines_collapsed(self, tmp_path: Path) -> None:
+        """[bubus] lines should be inside a <details> block."""
+        log = (
+            "2026-01-01 00:00:00,000 INFO     [Agent] Starting a browser-use agent\n"
+            "2026-01-01 00:00:01,000 INFO     [Agent] 📍 Step 1:\n"
+            "2026-01-01 00:00:01,500 INFO     [bubus] dispatch(SomeEvent)\n"
+        )
+        run_dir = _make_run_dir(tmp_path, agent_log_content=log)
+        generate_report(run_dir)
+        html = (run_dir / "report" / "agent_log.html").read_text()
+
+        assert "<details>" in html
+        assert "Show event bus details" in html
+        assert "dispatch(SomeEvent)" in html
 
 
 # ---------------------------------------------------------------------------

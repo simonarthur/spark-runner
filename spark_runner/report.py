@@ -190,6 +190,9 @@ details .detail-body {
 .pipeline-step .step-links { margin-top: 0.25rem; font-size: 0.85rem; }
 .pipeline-step .step-links a { margin-right: 0.75rem; }
 .token-info { color: var(--muted); font-size: 0.82rem; }
+.agent-step { color: var(--accent); font-weight: 700; }
+.agent-memory { color: #7c3aed; }
+.agent-result { color: var(--success); font-weight: 600; }
 """
 
 
@@ -200,6 +203,7 @@ _PAGE_NAMES: list[tuple[str, str]] = [
     ("events.html", "Events"),
     ("problems.html", "Problems"),
     ("conversations.html", "Conversations"),
+    ("agent_log.html", "Agent Log"),
     ("screenshots.html", "Screenshots"),
 ]
 
@@ -637,6 +641,117 @@ def _generate_pipeline_page(run_dir: Path, detail: RunDetail) -> str:
     return _page("Pipeline", nav_html, body)
 
 
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+"""Matches ANSI colour escape sequences."""
+
+_AGENT_BOUNDARY_RE = re.compile(r"Starting a browser-use agent")
+"""Line pattern that marks the beginning of a new phase's agent session."""
+
+_IMPORTANT_LOGGERS = {"[Agent]", "[tools]", "[BrowserSession]"}
+"""Logger tags whose lines are shown prominently."""
+
+_VERBOSE_LOGGERS = {"[bubus]", "[service]"}
+"""Logger tags whose lines go into a collapsed details block."""
+
+_LOGGER_TAG_RE = re.compile(r"\[(\w+)]")
+"""Extracts the first ``[word]`` logger tag from a log line."""
+
+
+def _generate_agent_log_page(run_dir: Path, detail: RunDetail) -> str:
+    """Generate the Agent Log page from ``agent_log.txt``.
+
+    The agent log is split into per-phase sections using the
+    ``Starting a browser-use agent`` boundary.  Important lines
+    (``[Agent]``, ``[tools]``, ``[BrowserSession]``) are shown prominently
+    while verbose lines (``[bubus]``, ``[service]``) are collapsed.
+    """
+    nav_html = _nav("agent_log.html", _has_problems(run_dir))
+
+    log_path = run_dir / "agent_log.txt"
+    if not log_path.exists():
+        body = "<h1>Agent Log</h1>\n<p>No agent log found.</p>"
+        return _page("Agent Log", nav_html, body)
+
+    raw = log_path.read_text()
+    text = _ANSI_RE.sub("", raw)
+
+    # Split into per-phase sections by the boundary line
+    lines = text.splitlines()
+    sections: list[list[str]] = []
+    current: list[str] = []
+    for line in lines:
+        if _AGENT_BOUNDARY_RE.search(line):
+            if current:
+                sections.append(current)
+            current = [line]
+        else:
+            current.append(line)
+    if current:
+        sections.append(current)
+
+    # If no boundary found at all, treat entire file as one section
+    if not sections:
+        sections = [lines]
+
+    # Lines before the first boundary are preamble — prepend to first section
+    # Actually the logic above already handles this: if lines before first
+    # boundary exist, they form sections[0] without a boundary line.
+
+    phase_names = [p.name for p in detail.phases]
+
+    parts: list[str] = []
+    for idx, section_lines in enumerate(sections):
+        if idx < len(phase_names):
+            heading = phase_names[idx]
+        else:
+            heading = f"Phase {idx + 1}"
+
+        important: list[str] = []
+        verbose: list[str] = []
+
+        for line in section_lines:
+            tag_match = _LOGGER_TAG_RE.search(line)
+            if tag_match:
+                tag = f"[{tag_match.group(1)}]"
+                if tag in _VERBOSE_LOGGERS:
+                    verbose.append(line)
+                    continue
+                if tag in _IMPORTANT_LOGGERS:
+                    important.append(line)
+                    continue
+            # Lines without a recognised tag go to important
+            important.append(line)
+
+        section_html = f'<h2>{_html_escape(heading)}</h2>\n'
+
+        if important:
+            highlighted_lines: list[str] = []
+            for line in important:
+                escaped = _html_escape(line)
+                if "\U0001f4cd Step" in line:  # 📍 Step
+                    escaped = f'<span class="agent-step">{escaped}</span>'
+                elif "\U0001f9e0 Memory" in line:  # 🧠 Memory
+                    escaped = f'<span class="agent-memory">{escaped}</span>'
+                elif "\U0001f4c4 Final Result" in line:  # 📄 Final Result
+                    escaped = f'<span class="agent-result">{escaped}</span>'
+                highlighted_lines.append(escaped)
+            section_html += f'<pre>{"".join(ln + "\n" for ln in highlighted_lines)}</pre>\n'
+
+        if verbose:
+            escaped_verbose = _html_escape("\n".join(verbose))
+            section_html += (
+                "<details>\n"
+                "<summary>Show event bus details</summary>\n"
+                f'<div class="detail-body"><pre>{escaped_verbose}</pre></div>\n'
+                "</details>\n"
+            )
+
+        parts.append(section_html)
+
+    body = "<h1>Agent Log</h1>\n" + "\n".join(parts)
+    return _page("Agent Log", nav_html, body)
+
+
 def _generate_screenshots_page(
     run_dir: Path,
     detail: RunDetail,
@@ -942,6 +1057,7 @@ def generate_report(run_dir: Path) -> Path:
         "events.html": _generate_events_page(run_dir),
         "problems.html": _generate_problems_page(run_dir, detail, ss_map),
         "conversations.html": _generate_conversations_page(run_dir, detail),
+        "agent_log.html": _generate_agent_log_page(run_dir, detail),
         "screenshots.html": _generate_screenshots_page(run_dir, detail, ss_map),
     }
 
