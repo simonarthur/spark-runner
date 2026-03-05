@@ -602,6 +602,30 @@ class TestPipelineRendering:
 
         assert 'conversations.html#phase-1' in index_html
         assert "agent conversation" in index_html
+        # Phase name should link to the Phases page
+        assert 'phases.html#phase-1' in index_html
+
+    def test_phase_execution_name_links_to_phases_page(self, tmp_path: Path) -> None:
+        """Phase execution step headers should link to the Phases page."""
+        pipeline = [
+            {
+                "name": "Phase: Login",
+                "step_type": "phase_execution",
+                "status": "completed",
+                "summary": "SUCCESS",
+                "conversation_file": None,
+                "phase_slug": "login",
+            },
+        ]
+        run_dir = _make_run_dir(
+            tmp_path,
+            phases=[{"name": "Login", "outcome": "SUCCESS", "screenshots": []}],
+            pipeline=pipeline,
+        )
+        generate_report(run_dir)
+        index_html = (run_dir / "report" / "index.html").read_text()
+
+        assert '<a href="phases.html#phase-1">Phase: Login</a>' in index_html
 
     def test_conversations_page_has_anchor_ids(self, tmp_path: Path) -> None:
         """Conversations page headings should have anchor IDs for linking."""

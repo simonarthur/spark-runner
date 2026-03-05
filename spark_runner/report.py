@@ -384,20 +384,23 @@ def _render_pipeline_timeline(pipeline: list[dict[str, Any]], detail: RunDetail 
         if conv_file:
             links.append(f'<a href="pipeline.html#{_html_escape(conv_file)}">view conversation</a>')
 
-        # Link phase execution steps to the Conversations page
+        # Link phase execution steps to Phases and Conversations pages
+        phase_anchor = ""
         if step.get("step_type") == "phase_execution" and detail is not None:
             phase_slug = step.get("phase_slug", "")
             for pi, p in enumerate(detail.phases, 1):
                 if phase_name_to_slug(p.name) == phase_slug:
+                    phase_anchor = f'phases.html#phase-{pi}'
                     links.append(f'<a href="conversations.html#phase-{pi}">agent conversation</a>')
                     break
 
         links_html = f'<div class="step-links">{" ".join(links)}</div>' if links else ""
 
+        name_html = f'<a href="{phase_anchor}">{name}</a>' if phase_anchor else name
         steps_html.append(
             f'<div class="pipeline-step">'
             f'<div class="step-marker {marker_cls}">{status_icon}</div>'
-            f'<div class="step-header">{name}</div>'
+            f'<div class="step-header">{name_html}</div>'
             f'<div class="step-summary">{summary}</div>'
             f'{links_html}'
             f'</div>'
