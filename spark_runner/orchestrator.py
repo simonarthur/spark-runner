@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import shutil
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -113,6 +114,42 @@ def _make_browser(*, headless: bool, keep_alive: bool = True) -> Browser:
     )
 
 
+def _copy_goal_files(
+    run_dir: Path,
+    goal_path: Path,
+    tasks_dir: Path,
+) -> None:
+    """Copy the goal JSON and its subtask files into ``run_dir/goal/``.
+
+    This preserves a snapshot of the goal and task content used for the run,
+    with placeholders still intact (no credential exposure).
+
+    Args:
+        run_dir: The run directory.
+        goal_path: Path to the goal summary JSON file.
+        tasks_dir: Directory containing subtask ``.txt`` files.
+    """
+    goal_dir = run_dir / "goal"
+    goal_dir.mkdir(exist_ok=True)
+
+    shutil.copy2(goal_path, goal_dir / goal_path.name)
+
+    try:
+        goal_data: dict[str, Any] = json.loads(goal_path.read_text())
+    except (json.JSONDecodeError, OSError):
+        return
+
+    for entry in goal_data.get("subtasks", []):
+        if not isinstance(entry, dict):
+            continue
+        filename = entry.get("filename", "")
+        if not filename:
+            continue
+        src = tasks_dir / filename
+        if src.exists():
+            shutil.copy2(src, goal_dir / filename)
+
+
 async def run_single(
     task: TaskSpec,
     config: SparkConfig,
@@ -213,6 +250,10 @@ async def run_single(
 
     # --- Create run_dir early ---
     run_dir: Path = make_run_dir(config.runs_dir, task_name)
+
+    # Copy goal and task files into run_dir/goal/ for archival
+    if goal_path is not None:
+        _copy_goal_files(run_dir, goal_path, config.tasks_dir)
 
     # Save generate_task_name conversation if it happened (prompt mode only)
     if naming_msgs is not None:
@@ -592,6 +633,7 @@ async def run_single(
                 for pr in phase_results
             ],
             screenshots=all_screenshots,
+            goal_file=goal_path.name if goal_path else None,
         )
 
         try:
