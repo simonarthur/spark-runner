@@ -584,8 +584,17 @@ def results_screenshots(ctx: click.Context, run_path: str | None) -> None:
 
 @results.command("report")
 @click.argument("run_path", required=False, default=None, shell_complete=_complete_run_path)
+@click.option(
+    "--all",
+    "regenerate_all",
+    is_flag=True,
+    default=False,
+    help="Regenerate reports for all runs.",
+)
 @click.pass_context
-def results_report(ctx: click.Context, run_path: str | None) -> None:
+def results_report(
+    ctx: click.Context, run_path: str | None, regenerate_all: bool
+) -> None:
     """Generate or regenerate HTML report for a run."""
     data_dir = _get_data_dir(ctx)
     config_path = _get_config_path(ctx)
@@ -593,9 +602,21 @@ def results_report(ctx: click.Context, run_path: str | None) -> None:
         config_path=Path(config_path) if config_path else None,
         data_dir=Path(data_dir) if data_dir else None,
     )
-    resolved = _resolve_run_path(run_path, config.runs_dir)
+
     from spark_runner.report import generate_report
 
+    if regenerate_all:
+        from spark_runner.results import list_runs
+
+        runs_dir = config.runs_dir
+        summaries = list_runs(runs_dir)
+        for summary in summaries:
+            index_path = generate_report(summary.run_dir)
+            print(f"  {summary.task_name}/{summary.timestamp} -> {index_path}")
+        print(f"Regenerated reports for {len(summaries)} run(s).")
+        return
+
+    resolved = _resolve_run_path(run_path, config.runs_dir)
     index_path = generate_report(resolved)
     print(f"HTML report generated: {index_path}")
 

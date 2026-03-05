@@ -765,3 +765,51 @@ class TestLegacyMain:
             mock_cli.assert_called_once()
         finally:
             sys.argv = original
+
+
+# ── results report --all ─────────────────────────────────────────────────
+
+
+class TestResultsReportAll:
+    @patch("spark_runner.cli.build_config")
+    def test_results_report_all(
+        self,
+        mock_config: MagicMock,
+        runner: click.testing.CliRunner,
+        tmp_path: Path,
+    ) -> None:
+        """--all regenerates reports for every run."""
+        runs_dir = tmp_path / "runs"
+        for task, ts in [("task-a", "2026-01-01_00-00-00"), ("task-b", "2026-01-02_00-00-00")]:
+            d = runs_dir / task / ts
+            d.mkdir(parents=True)
+            (d / "run_metadata.json").write_text("{}")
+
+        mock_config.return_value = MagicMock(runs_dir=runs_dir)
+
+        with patch("spark_runner.report.generate_report") as mock_gen:
+            mock_gen.side_effect = lambda rd: rd / "report" / "index.html"
+            result = runner.invoke(cli, ["results", "report", "--all"])
+
+        assert result.exit_code == 0
+        assert mock_gen.call_count == 2
+        assert "2 run(s)" in result.output
+
+    @patch("spark_runner.cli.build_config")
+    def test_results_report_all_empty(
+        self,
+        mock_config: MagicMock,
+        runner: click.testing.CliRunner,
+        tmp_path: Path,
+    ) -> None:
+        """--all on empty runs dir prints 0."""
+        runs_dir = tmp_path / "runs"
+        runs_dir.mkdir()
+        mock_config.return_value = MagicMock(runs_dir=runs_dir)
+
+        with patch("spark_runner.report.generate_report") as mock_gen:
+            result = runner.invoke(cli, ["results", "report", "--all"])
+
+        assert result.exit_code == 0
+        assert mock_gen.call_count == 0
+        assert "0 run(s)" in result.output
