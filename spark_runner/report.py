@@ -198,6 +198,7 @@ details .detail-body {
 
 _PAGE_NAMES: list[tuple[str, str]] = [
     ("index.html", "Overview"),
+    ("goal.html", "Goal"),
     ("pipeline.html", "Pipeline"),
     ("phases.html", "Phases"),
     ("events.html", "Events"),
@@ -384,9 +385,16 @@ def _render_pipeline_timeline(pipeline: list[dict[str, Any]], detail: RunDetail 
         if conv_file:
             links.append(f'<a href="pipeline.html#{_html_escape(conv_file)}">view conversation</a>')
 
+        # Link goal-related steps to Goal page
+        step_type = step.get("step_type", "")
+        if step_type == "goal_source":
+            links.append('<a href="goal.html">view goal</a>')
+        elif step_type == "phases_loaded":
+            links.append('<a href="goal.html#subtasks">view task files</a>')
+
         # Link phase execution steps to Phases and Conversations pages
         phase_anchor = ""
-        if step.get("step_type") == "phase_execution" and detail is not None:
+        if step_type == "phase_execution" and detail is not None:
             phase_slug = step.get("phase_slug", "")
             for pi, p in enumerate(detail.phases, 1):
                 if phase_name_to_slug(p.name) == phase_slug:
@@ -447,6 +455,95 @@ def _render_fallback_phase_table(
         phase_rows = "<h2>Phases</h2>\n<p>No phase data available.</p>"
 
     return f"{meta_table}\n{phase_rows}"
+
+
+def _render_goal_observations(observations: list[dict[str, str] | str]) -> str:
+    """Render goal observations as an HTML table with severity badges."""
+    if not observations:
+        return ""
+    rows: list[str] = []
+    for obs in observations:
+        if isinstance(obs, dict):
+            text = _html_escape(obs.get("text", ""))
+            severity = obs.get("severity", "unclassified")
+        else:
+            text = _html_escape(str(obs))
+            severity = "unclassified"
+        badge_cls = "badge-fail" if severity == "error" else "badge-success"
+        badge = f'<span class="badge {badge_cls}">{_html_escape(severity)}</span>'
+        rows.append(f"<tr><td>{badge}</td><td>{text}</td></tr>")
+    return (
+        '<h2>Key Observations</h2>\n'
+        '<table><tr><th>Severity</th><th>Observation</th></tr>\n'
+        + "\n".join(rows)
+        + "\n</table>"
+    )
+
+
+def _render_goal_subtasks(goal_dir: Path, subtasks: list[dict[str, Any]]) -> str:
+    """Render subtask list with collapsible task file contents."""
+    if not subtasks:
+        return ""
+    sections: list[str] = []
+    for i, entry in enumerate(subtasks, 1):
+        if not isinstance(entry, dict):
+            continue
+        filename = entry.get("filename", "")
+        task_file = goal_dir / filename if filename else None
+        content = ""
+        if task_file and task_file.exists():
+            raw = task_file.read_text()
+            content = _markdown_to_html(raw)
+        label = _html_escape(filename or f"Subtask {i}")
+        sections.append(
+            f'<details><summary>{label}</summary>'
+            f'<div class="task-file-content">{content}</div>'
+            f'</details>'
+        )
+    return f'<h2 id="subtasks">Subtasks</h2>\n' + "\n".join(sections)
+
+
+def _generate_goal_page(run_dir: Path, detail: RunDetail) -> str:
+    """Generate the Goal page showing goal/task file contents."""
+    nav_html = _nav("goal.html", _has_problems(run_dir))
+    goal_dir = run_dir / "goal"
+
+    if not goal_dir.exists():
+        # CLI prompt run — show the prompt text
+        prompt_text = _html_escape(detail.prompt) if detail.prompt else "(no prompt)"
+        body = (
+            "<h1>Goal</h1>\n"
+            '<p style="color:var(--muted)">This run was started from a CLI prompt (no goal file).</p>\n'
+            f"<h2>Prompt</h2>\n<pre>{prompt_text}</pre>"
+        )
+        return _page("Goal", nav_html, body)
+
+    # Find the goal JSON in goal_dir
+    goal_json_files = list(goal_dir.glob("*-task.json"))
+    if not goal_json_files:
+        body = "<h1>Goal</h1>\n<p>No goal file found in run data.</p>"
+        return _page("Goal", nav_html, body)
+
+    goal_file = goal_json_files[0]
+    try:
+        goal_data: dict[str, Any] = json.loads(goal_file.read_text())
+    except (json.JSONDecodeError, OSError):
+        body = "<h1>Goal</h1>\n<p>Could not read goal file.</p>"
+        return _page("Goal", nav_html, body)
+
+    main_task = _html_escape(goal_data.get("main_task", "(no description)"))
+    observations: list[dict[str, str] | str] = goal_data.get("key_observations", [])
+    subtasks: list[dict[str, Any]] = goal_data.get("subtasks", [])
+
+    obs_html = _render_goal_observations(observations)
+    subtasks_html = _render_goal_subtasks(goal_dir, subtasks)
+
+    body = (
+        f"<h1>Goal: {main_task}</h1>\n"
+        f'<p style="color:var(--muted)">Source: {_html_escape(goal_file.name)}</p>\n'
+        f"{obs_html}\n{subtasks_html}"
+    )
+    return _page("Goal", nav_html, body)
 
 
 def _generate_phases_page(
@@ -1121,6 +1218,7 @@ def generate_report(run_dir: Path) -> Path:
 
     pages: dict[str, str] = {
         "index.html": _generate_index_page(run_dir, detail, ss_map),
+        "goal.html": _generate_goal_page(run_dir, detail),
         "pipeline.html": _generate_pipeline_page(run_dir, detail),
         "phases.html": _generate_phases_page(run_dir, detail, phase_summaries, ss_map),
         "events.html": _generate_events_page(run_dir),
