@@ -34,6 +34,26 @@ class CredentialProfile:
 
 
 @dataclass
+class EnvironmentProfile:
+    """An environment with its own base_url and credential pool."""
+
+    name: str = ""
+    base_url: str = ""
+    is_production: bool = False
+    credentials: dict[str, CredentialProfile] = field(default_factory=dict)
+
+
+@dataclass
+class GoalSafety:
+    """Safety metadata for a goal."""
+
+    blocked_in_production: bool = False
+    allowed_environments: list[str] = field(default_factory=list)
+    risk_level: str = ""
+    reason: str = ""
+
+
+@dataclass
 class SparkConfig:
     """Central configuration for spark_runner."""
 
@@ -45,6 +65,9 @@ class SparkConfig:
     credentials: dict[str, CredentialProfile] = field(default_factory=dict)
     active_credential_profile: str = "default"
     models: dict[str, ModelConfig] = field(default_factory=dict)
+    environments: dict[str, EnvironmentProfile] = field(default_factory=dict)
+    active_environment: str | None = None
+    force_unsafe: bool = False
 
     # Behavior flags
     update_summary: bool = True
