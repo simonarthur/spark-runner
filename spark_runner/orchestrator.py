@@ -328,7 +328,7 @@ async def run_single(
         browser = Browser(
             headless=config.headless,
             keep_alive=True,
-            args=["--disable-save-password-bubble"],
+            args=["--disable-features=PasswordManager"],
         )
     llm: ChatBrowserUse = ChatBrowserUse()
 
@@ -622,7 +622,7 @@ async def run_multiple(
         browser = Browser(
             headless=config.headless,
             keep_alive=True,
-            args=["--disable-save-password-bubble"],
+            args=["--disable-features=PasswordManager"],
         )
 
     try:
