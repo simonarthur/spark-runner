@@ -540,6 +540,7 @@ class TestRunSetupWizard:
         ])
         output = capsys.readouterr().out
         assert "Setup complete!" in output
+        assert "spark-runner generate-goals" in output
         assert "spark-runner run" in output
 
     def test_custom_data_dir_shows_env_var_hint(

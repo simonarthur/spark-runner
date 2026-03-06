@@ -397,8 +397,10 @@ def run_setup_wizard(config_path: Path) -> Path:
         )
         click.echo(f"\n  export SPARK_RUNNER_DATA_DIR=\"{resolved_data_dir}\"")
 
-    click.echo("\nSetup complete! Try running your first task with:")
-    click.echo(f"\n  spark-runner run -p \"Log in and verify the dashboard loads\"")
+    click.echo("\nSetup complete! Generate test goals from your codebase with:")
+    click.echo("\n  spark-runner generate-goals /path/to/your/repo")
+    click.echo("\nOr run a single task with:")
+    click.echo("\n  spark-runner run -p \"Log in and verify the dashboard loads\"")
     click.echo()
     return config_path
 
