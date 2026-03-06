@@ -31,15 +31,26 @@ class TestTopLevelCLI:
         assert result.exit_code == 0
         assert "Spark Runner" in result.output
 
-    def test_no_args_runs_init_when_no_config(
+    def test_no_args_prompts_and_runs_init_when_no_config(
         self, runner: click.testing.CliRunner, tmp_path: Path,
     ) -> None:
         config_path = tmp_path / "no_such_config.yaml"
         with patch("spark_runner.cli.resolve_config_path", return_value=config_path), \
              patch("spark_runner.cli.run_setup_wizard", return_value=config_path) as mock_wiz:
-            result = runner.invoke(cli, [])
+            result = runner.invoke(cli, [], input="y\n")
         assert result.exit_code == 0
+        assert "Set up spark-runner now?" in result.output
         mock_wiz.assert_called_once_with(config_path)
+
+    def test_no_args_declines_init_when_no_config(
+        self, runner: click.testing.CliRunner, tmp_path: Path,
+    ) -> None:
+        config_path = tmp_path / "no_such_config.yaml"
+        with patch("spark_runner.cli.resolve_config_path", return_value=config_path), \
+             patch("spark_runner.cli.run_setup_wizard") as mock_wiz:
+            result = runner.invoke(cli, [], input="n\n")
+        assert result.exit_code == 0
+        mock_wiz.assert_not_called()
 
     def test_help_flag(self, runner: click.testing.CliRunner) -> None:
         result = runner.invoke(cli, ["--help"])
