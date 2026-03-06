@@ -438,13 +438,28 @@ class TestRunSetupWizard:
     # Never pass "~/spark_runner" or any real home-relative path to
     # run_setup_wizard — it creates directories on disk and will pollute
     # the user's home directory.
+    def _run_wizard(
+        self, tmp_path: Path, prompts: list[str],
+        confirms: list[bool] | None = None,
+    ) -> Path:
+        """Helper: run the wizard with canned prompt/confirm responses.
+
+        ``confirms`` maps to the click.confirm calls:
+        - [0] = "set up more environments?"
+        - [1..] = "add another environment?" (if applicable)
+        Defaults to [False] (decline environments).
+        """
+        if confirms is None:
+            confirms = [False]
+        with patch("click.prompt", side_effect=prompts), \
+             patch("click.confirm", side_effect=confirms):
+            return run_setup_wizard(tmp_path / "ignored.yaml")
+
     def test_writes_valid_yaml(self, tmp_path: Path) -> None:
         data_dir = tmp_path / "data"
-        with patch("click.prompt", side_effect=[
+        result = self._run_wizard(tmp_path, [
             str(data_dir), "https://example.com", "me@test.com", "secret",
-        ]):
-            result = run_setup_wizard(tmp_path / "ignored.yaml")
-        # Config is always placed inside the chosen data directory
+        ])
         expected = data_dir / "config.yaml"
         assert result == expected
         assert expected.exists()
@@ -456,49 +471,110 @@ class TestRunSetupWizard:
 
     def test_creates_data_directories(self, tmp_path: Path) -> None:
         data_dir = tmp_path / "mydata"
-        with patch("click.prompt", side_effect=[
+        self._run_wizard(tmp_path, [
             str(data_dir), "https://example.com", "", "",
-        ]):
-            run_setup_wizard(tmp_path / "ignored.yaml")
+        ])
         assert (data_dir / "tasks").is_dir()
         assert (data_dir / "goal_summaries").is_dir()
         assert (data_dir / "runs").is_dir()
 
     def test_sets_permissions_when_credentials_provided(self, tmp_path: Path) -> None:
         data_dir = tmp_path / "data"
-        with patch("click.prompt", side_effect=[
+        result = self._run_wizard(tmp_path, [
             str(data_dir), "https://example.com", "user@test.com", "pw",
-        ]):
-            result = run_setup_wizard(tmp_path / "ignored.yaml")
+        ])
         mode = result.stat().st_mode & 0o777
         assert mode == 0o600
 
     def test_skips_permissions_when_no_credentials(self, tmp_path: Path) -> None:
         data_dir = tmp_path / "data"
-        with patch("click.prompt", side_effect=[
+        result = self._run_wizard(tmp_path, [
             str(data_dir), "https://example.com", "", "",
-        ]):
-            result = run_setup_wizard(tmp_path / "ignored.yaml")
+        ])
         mode = result.stat().st_mode & 0o777
-        # Should NOT be 0600 — default permissions preserved
         assert mode != 0o600
 
     def test_uses_defaults_when_accepted(self, tmp_path: Path) -> None:
         # NOTE: Never use ~/spark_runner here — tests must use tmp_path to
         # avoid creating real directories in the user's home.
         default_dir = str(tmp_path / "spark_runner")
-        with patch("click.prompt", side_effect=[
+        result = self._run_wizard(tmp_path, [
             default_dir, "https://sparky-web-dev.vercel.app", "", "",
-        ]):
-            result = run_setup_wizard(tmp_path / "ignored.yaml")
+        ])
         data = yaml.safe_load(result.read_text())
         assert data["general"]["data_dir"] == default_dir
         assert data["general"]["base_url"] == "https://sparky-web-dev.vercel.app"
 
     def test_returns_config_inside_data_dir(self, tmp_path: Path) -> None:
         data_dir = tmp_path / "data"
-        with patch("click.prompt", side_effect=[
+        result = self._run_wizard(tmp_path, [
             str(data_dir), "https://example.com", "", "",
-        ]):
-            result = run_setup_wizard(tmp_path / "ignored.yaml")
+        ])
         assert result == data_dir / "config.yaml"
+
+    def test_shows_completion_message(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        data_dir = tmp_path / "data"
+        self._run_wizard(tmp_path, [
+            str(data_dir), "https://example.com", "", "",
+        ])
+        output = capsys.readouterr().out
+        assert "Setup complete!" in output
+        assert "spark-runner run" in output
+
+    def test_single_environment(self, tmp_path: Path) -> None:
+        data_dir = tmp_path / "data"
+        result = self._run_wizard(
+            tmp_path,
+            # base prompts + env prompts:
+            # data_dir, base_url, email, password, env_name, env_url, env_email, env_password
+            [
+                str(data_dir), "https://example.com", "", "",
+                "staging", "https://staging.example.com", "stage@test.com", "stagepass",
+            ],
+            # yes to "set up environments?", no to "is production?", no to "add another?"
+            confirms=[True, False, False],
+        )
+        data = yaml.safe_load(result.read_text())
+        assert "environments" in data
+        assert "staging" in data["environments"]
+        env = data["environments"]["staging"]
+        assert env["base_url"] == "https://staging.example.com"
+        assert env["credentials"]["default"]["email"] == "stage@test.com"
+
+    def test_multiple_environments(self, tmp_path: Path) -> None:
+        data_dir = tmp_path / "data"
+        result = self._run_wizard(
+            tmp_path,
+            [
+                str(data_dir), "https://example.com", "", "",
+                "staging", "https://staging.example.com", "", "",
+                "production", "https://app.example.com", "prod@test.com", "prodpass",
+            ],
+            # yes environments, no is_prod, yes add another, yes is_prod, no add another
+            confirms=[True, False, True, True, False],
+        )
+        data = yaml.safe_load(result.read_text())
+        assert "staging" in data["environments"]
+        assert "production" in data["environments"]
+        assert data["environments"]["production"].get("is_production") is True
+
+    def test_no_environments_produces_comments(self, tmp_path: Path) -> None:
+        data_dir = tmp_path / "data"
+        result = self._run_wizard(tmp_path, [
+            str(data_dir), "https://example.com", "", "",
+        ])
+        raw = result.read_text()
+        assert "# environments:" in raw
+
+    def test_environment_credentials_trigger_permissions(self, tmp_path: Path) -> None:
+        data_dir = tmp_path / "data"
+        result = self._run_wizard(
+            tmp_path,
+            [
+                str(data_dir), "https://example.com", "", "",
+                "staging", "https://staging.example.com", "s@test.com", "pw",
+            ],
+            confirms=[True, False, False],
+        )
+        mode = result.stat().st_mode & 0o777
+        assert mode == 0o600

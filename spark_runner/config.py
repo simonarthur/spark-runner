@@ -107,32 +107,80 @@ def resolve_config_path(
     return default_data_dir / "config.yaml"
 
 
-_CONFIG_TEMPLATE = """\
-general:
-  data_dir: {data_dir}
-  base_url: {base_url}
+def _build_config_yaml(
+    data_dir: str,
+    base_url: str,
+    email: str,
+    password: str,
+    environments: list[dict[str, str]],
+) -> str:
+    """Build the config.yaml content string with optional environments."""
+    lines: list[str] = [
+        "general:",
+        f"  data_dir: {data_dir}",
+        f"  base_url: {base_url}",
+        "",
+        "credentials:",
+        "  default:",
+        f'    email: "{email}"',
+        f'    password: "{password}"',
+    ]
 
-credentials:
-  default:
-    email: "{email}"
-    password: "{password}"
+    if environments:
+        lines.append("")
+        lines.append("environments:")
+        for env in environments:
+            lines.append(f"  {env['name']}:")
+            lines.append(f"    base_url: {env['base_url']}")
+            if env.get("is_production"):
+                lines.append("    is_production: true")
+            if env.get("email") or env.get("password"):
+                lines.append("    credentials:")
+                lines.append("      default:")
+                lines.append(f'        email: "{env.get("email", "")}"')
+                lines.append(f'        password: "{env.get("password", "")}"')
+    else:
+        lines.extend([
+            "",
+            "# Uncomment and configure environments for multi-environment support:",
+            "# environments:",
+            "#   staging:",
+            "#     base_url: https://staging.example.com",
+            "#     credentials:",
+            "#       default:",
+            "#         email: staging@example.com",
+            "#         password: stagingpass",
+            "#   production:",
+            "#     base_url: https://app.example.com",
+            "#     is_production: true",
+            "#     credentials:",
+            "#       default:",
+            "#         email: prod@example.com",
+            "#         password: prodpass",
+        ])
 
-# Uncomment and configure environments for multi-environment support:
-# environments:
-#   staging:
-#     base_url: https://staging.example.com
-#     credentials:
-#       default:
-#         email: staging@example.com
-#         password: stagingpass
-#   production:
-#     base_url: https://app.example.com
-#     is_production: true
-#     credentials:
-#       default:
-#         email: prod@example.com
-#         password: prodpass
-"""
+    lines.append("")
+    return "\n".join(lines)
+
+
+def _prompt_environment() -> dict[str, str]:
+    """Prompt the user for a single environment's settings."""
+    name = click.prompt("  Environment name (e.g. staging, production)", type=str)
+    env_base_url = click.prompt(f"  Base URL for '{name}'", type=str)
+    is_prod_str = "true" if click.confirm(
+        f"  Is '{name}' a production environment?", default=False,
+    ) else ""
+    env_email = click.prompt(f"  Login username for '{name}'", default="", type=str)
+    env_password = click.prompt(
+        f"  Password for '{name}'", default="", hide_input=True, type=str,
+    )
+    return {
+        "name": name,
+        "base_url": env_base_url,
+        "is_production": is_prod_str,
+        "email": env_email,
+        "password": env_password,
+    }
 
 
 def run_setup_wizard(config_path: Path) -> Path:
@@ -146,19 +194,32 @@ def run_setup_wizard(config_path: Path) -> Path:
     click.echo("Spark Runner – First-time setup\n")
 
     data_dir = click.prompt(
-        "Data directory",
+        "Data directory: this is where your Spark Runner data and configuration will be stored.",
         default="~/spark_runner",
         type=str,
     )
     base_url = click.prompt(
         "Base URL",
-        default="https://sparky-web-dev.vercel.app",
+        default="https://www.example.com",
         type=str,
     )
-    email = click.prompt("Default email", default="", type=str)
+    email = click.prompt("Default login username for the test website", default="", type=str)
     password = click.prompt(
-        "Default password", default="", hide_input=True, type=str,
+        "Default password for the test website", default="", hide_input=True, type=str,
     )
+
+    # Optional multi-environment setup
+    environments: list[dict[str, str]] = []
+    if click.confirm(
+        "\nDo you want to set up more environments "
+        "(development, staging, production...)?",
+        default=False,
+    ):
+        while True:
+            click.echo()
+            environments.append(_prompt_environment())
+            if not click.confirm("\n  Add another environment?", default=False):
+                break
 
     # Create data directory and subdirectories
     resolved_data_dir = _resolve_path(data_dir)
@@ -168,19 +229,28 @@ def run_setup_wizard(config_path: Path) -> Path:
     # Place config.yaml inside the chosen data directory
     config_path = resolved_data_dir / "config.yaml"
     config_path.parent.mkdir(parents=True, exist_ok=True)
-    config_content = _CONFIG_TEMPLATE.format(
+    config_content = _build_config_yaml(
         data_dir=data_dir,
         base_url=base_url,
         email=email,
         password=password,
+        environments=environments,
     )
     config_path.write_text(config_content)
 
     # Restrict permissions when credentials are present
-    if email or password:
+    has_credentials = bool(email or password)
+    if not has_credentials:
+        has_credentials = any(
+            env.get("email") or env.get("password") for env in environments
+        )
+    if has_credentials:
         set_config_file_permissions(config_path)
 
     click.echo(f"\nConfig written to {config_path}")
+    click.echo("\nSetup complete! Try running your first task with:")
+    click.echo(f"\n  spark-runner run -p \"Log in and verify the dashboard loads\"")
+    click.echo()
     return config_path
 
 
