@@ -42,7 +42,7 @@ class TestTopLevelCLI:
         assert "Set up spark-runner now?" in result.output
         mock_wiz.assert_called_once_with(config_path)
 
-    def test_no_args_declines_init_when_no_config(
+    def test_no_args_declines_init_shows_help(
         self, runner: click.testing.CliRunner, tmp_path: Path,
     ) -> None:
         config_path = tmp_path / "no_such_config.yaml"
@@ -51,6 +51,8 @@ class TestTopLevelCLI:
             result = runner.invoke(cli, [], input="n\n")
         assert result.exit_code == 0
         mock_wiz.assert_not_called()
+        assert "Spark Runner" in result.output
+        assert "--help" in result.output
 
     def test_help_flag(self, runner: click.testing.CliRunner) -> None:
         result = runner.invoke(cli, ["--help"])

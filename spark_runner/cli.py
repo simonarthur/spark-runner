@@ -269,10 +269,11 @@ def cli(ctx: click.Context, data_dir: str | None, config_path: str | None) -> No
         )
         if not resolved_cfg.exists():
             if click.confirm(
-                "spark-runner configuration not found. Set up spark-runner now?"
+                "spark-runner configuration not found. Set up spark-runner now?",
+                default=True,
             ):
                 ctx.invoke(init, force=False)
-            return
+                return
         click.echo(ctx.get_help())
 
 
