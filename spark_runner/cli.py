@@ -263,6 +263,13 @@ def cli(ctx: click.Context, data_dir: str | None, config_path: str | None) -> No
     ctx.obj["data_dir"] = data_dir
     ctx.obj["config_path"] = config_path
     if ctx.invoked_subcommand is None:
+        resolved_cfg = resolve_config_path(
+            config_path=Path(config_path) if config_path else None,
+            data_dir=Path(data_dir) if data_dir else None,
+        )
+        if not resolved_cfg.exists():
+            ctx.invoke(init, force=False)
+            return
         click.echo(ctx.get_help())
 
 

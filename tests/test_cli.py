@@ -21,10 +21,25 @@ def runner() -> click.testing.CliRunner:
 
 
 class TestTopLevelCLI:
-    def test_no_args_shows_help(self, runner: click.testing.CliRunner) -> None:
-        result = runner.invoke(cli, [])
+    def test_no_args_shows_help_when_config_exists(
+        self, runner: click.testing.CliRunner, tmp_path: Path,
+    ) -> None:
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text("general:\n  base_url: https://example.com\n")
+        with patch("spark_runner.cli.resolve_config_path", return_value=config_path):
+            result = runner.invoke(cli, [])
         assert result.exit_code == 0
         assert "Spark Runner" in result.output
+
+    def test_no_args_runs_init_when_no_config(
+        self, runner: click.testing.CliRunner, tmp_path: Path,
+    ) -> None:
+        config_path = tmp_path / "no_such_config.yaml"
+        with patch("spark_runner.cli.resolve_config_path", return_value=config_path), \
+             patch("spark_runner.cli.run_setup_wizard", return_value=config_path) as mock_wiz:
+            result = runner.invoke(cli, [])
+        assert result.exit_code == 0
+        mock_wiz.assert_called_once_with(config_path)
 
     def test_help_flag(self, runner: click.testing.CliRunner) -> None:
         result = runner.invoke(cli, ["--help"])
