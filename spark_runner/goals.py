@@ -102,6 +102,14 @@ def list_goals(
         if num_unclassified:
             severity_parts.append(f"{num_unclassified} unclassified")
         severity_str: str = f" ({', '.join(severity_parts)})" if severity_parts else ""
+        safety_raw: dict[str, Any] = data.get("safety", {})
+        safety_label: str = ""
+        if safety_raw:
+            if safety_raw.get("blocked_in_production"):
+                safety_label = " [restricted: production-blocked]"
+            elif safety_raw.get("allowed_environments"):
+                envs = ", ".join(safety_raw["allowed_environments"])
+                safety_label = f" [restricted: {envs} only]"
         task_name = goal_file.stem.removesuffix("-task")
         last_run_info = get_last_run_info(runs_dir, task_name)
         if last_run_info:
@@ -109,7 +117,7 @@ def list_goals(
             last_run_str = f"  Last run: {timestamp} [{status}]"
         else:
             last_run_str = "  Last run: never"
-        print(f"    Subtasks: {num_subtasks}  Observations: {num_observations}{severity_str}")
+        print(f"    Subtasks: {num_subtasks}  Observations: {num_observations}{severity_str}{safety_label}")
         print(f"   {last_run_str}")
         print()
 
@@ -223,6 +231,18 @@ def show_goal_detail(
 
     print(f"Goal: {goal_path.name}")
     print(f"  Task: {data.get('main_task', '(no description)')}")
+
+    safety_raw: dict[str, Any] = data.get("safety", {})
+    if safety_raw:
+        print("\n  Safety:")
+        if safety_raw.get("blocked_in_production"):
+            print("    Blocked in production: yes")
+        if safety_raw.get("allowed_environments"):
+            print(f"    Allowed environments: {', '.join(safety_raw['allowed_environments'])}")
+        if safety_raw.get("risk_level"):
+            print(f"    Risk level: {safety_raw['risk_level']}")
+        if safety_raw.get("reason"):
+            print(f"    Reason: {safety_raw['reason']}")
 
     subtasks: list[dict[str, Any]] = data.get("subtasks", [])
     if subtasks:

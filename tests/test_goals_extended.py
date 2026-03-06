@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 import pytest
 
-from spark_runner.goals import delete_goal, show_goal_detail
+from spark_runner.goals import delete_goal, list_goals, show_goal_detail
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────
@@ -21,6 +21,7 @@ def _write_goal(
     main_task: str = "Do something",
     subtasks: list[dict[str, Any]] | None = None,
     observations: list[Any] | None = None,
+    safety: dict[str, Any] | None = None,
 ) -> Path:
     """Write a goal summary JSON file and return its path."""
     goal_path = goal_summaries_dir / f"{name}-task.json"
@@ -29,6 +30,8 @@ def _write_goal(
         "subtasks": subtasks or [],
         "key_observations": observations or [],
     }
+    if safety is not None:
+        data["safety"] = safety
     goal_path.write_text(json.dumps(data))
     return goal_path
 
@@ -263,3 +266,78 @@ class TestDeleteGoal:
             delete_goal(goal_summaries_dir, tasks_dir, "delete-me", force=False)
 
         assert not goal_path.exists()
+
+
+# ── Safety display in list_goals and show_goal_detail ─────────────────────
+
+
+class TestGoalsSafetyDisplay:
+    def test_list_goals_shows_restricted_label_blocked(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        _write_goal(
+            tmp_path, "admin-settings",
+            safety={"blocked_in_production": True, "reason": "dangerous"},
+        )
+        list_goals(tmp_path, _identity, None)
+        output = capsys.readouterr().out
+        assert "restricted" in output
+        assert "production-blocked" in output
+
+    def test_list_goals_shows_restricted_label_allowed_envs(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        _write_goal(
+            tmp_path, "permissions-goal",
+            safety={"allowed_environments": ["dev", "staging"]},
+        )
+        list_goals(tmp_path, _identity, None)
+        output = capsys.readouterr().out
+        assert "restricted" in output
+        assert "dev, staging" in output
+
+    def test_list_goals_no_safety_no_label(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        _write_goal(tmp_path, "normal-goal")
+        list_goals(tmp_path, _identity, None)
+        output = capsys.readouterr().out
+        assert "restricted" not in output
+
+    def test_show_goal_detail_shows_safety_block(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        _write_goal(
+            tmp_path, "risky-goal",
+            safety={
+                "blocked_in_production": True,
+                "risk_level": "high",
+                "reason": "Modifies global settings",
+            },
+        )
+        show_goal_detail(tmp_path, "risky-goal", _identity)
+        output = capsys.readouterr().out
+        assert "Safety:" in output
+        assert "Blocked in production: yes" in output
+        assert "Risk level: high" in output
+        assert "Modifies global settings" in output
+
+    def test_show_goal_detail_shows_allowed_environments(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        _write_goal(
+            tmp_path, "env-goal",
+            safety={"allowed_environments": ["dev", "staging"]},
+        )
+        show_goal_detail(tmp_path, "env-goal", _identity)
+        output = capsys.readouterr().out
+        assert "Safety:" in output
+        assert "dev, staging" in output
+
+    def test_show_goal_detail_no_safety_no_section(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        _write_goal(tmp_path, "plain-goal")
+        show_goal_detail(tmp_path, "plain-goal", _identity)
+        output = capsys.readouterr().out
+        assert "Safety:" not in output
