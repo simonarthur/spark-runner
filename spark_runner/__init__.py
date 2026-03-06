@@ -61,7 +61,7 @@ import anthropic
 USER_EMAIL: str = os.environ.get("USER_EMAIL", "")
 USER_PASSWORD: str = os.environ.get("USER_PASSWORD", "")
 summary_client: anthropic.Anthropic = anthropic.Anthropic()
-DEFAULT_HOST: str = "https://sparky-web-dev.vercel.app"
+DEFAULT_HOST: str = "https://example.com"
 HOST: str = ""
 
 # Directories — created lazily; tests redirect these via monkeypatch
