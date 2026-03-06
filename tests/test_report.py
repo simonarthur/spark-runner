@@ -31,6 +31,8 @@ def _make_run_dir(
     pipeline: list[dict[str, object]] | None = None,
     llm_files: dict[str, object] | None = None,
     agent_log_content: str = "",
+    environment: str | None = None,
+    credential_profile: str = "default",
 ) -> Path:
     """Create a synthetic run directory under *tmp_path*."""
     run_dir = tmp_path / task_name / "2025-01-01T00-00-00"
@@ -45,15 +47,17 @@ def _make_run_dir(
             }
         ]
 
-    metadata = {
+    metadata: dict[str, object] = {
         "task_name": task_name,
         "prompt": prompt,
         "timestamp": "2025-01-01T00:00:00",
         "base_url": "https://example.com",
-        "credential_profile": "default",
+        "credential_profile": credential_profile,
         "phases": phases,
         "screenshots": [],
     }
+    if environment is not None:
+        metadata["environment"] = environment
     (run_dir / "run_metadata.json").write_text(json.dumps(metadata, indent=2))
 
     if event_log_content:
@@ -140,6 +144,25 @@ class TestGenerateReport:
         assert "Search" in index_html
         assert "SUCCESS" in index_html
         assert "FAILED" in index_html
+
+    def test_index_shows_environment_and_login(self, tmp_path: Path) -> None:
+        run_dir = _make_run_dir(
+            tmp_path,
+            task_name="env-run",
+            environment="staging",
+            credential_profile="admin",
+        )
+        generate_report(run_dir)
+        index_html = (run_dir / "report" / "index.html").read_text()
+        assert "Environment: staging" in index_html
+        assert "Login: admin" in index_html
+
+    def test_index_no_environment_omits_field(self, tmp_path: Path) -> None:
+        run_dir = _make_run_dir(tmp_path, task_name="no-env")
+        generate_report(run_dir)
+        index_html = (run_dir / "report" / "index.html").read_text()
+        assert "Environment:" not in index_html
+        assert "Login: default" in index_html
 
     def test_phases_page_renders_markdown_summaries(self, tmp_path: Path) -> None:
         run_dir = _make_run_dir(
@@ -1055,15 +1078,17 @@ def _make_runs_dir(
         timestamp = str(run["timestamp"])
         run_dir = runs_dir / task_name / timestamp
         run_dir.mkdir(parents=True)
-        metadata = {
+        metadata: dict[str, object] = {
             "task_name": task_name,
             "prompt": run.get("prompt", ""),
             "timestamp": timestamp.replace("T", " ").replace("-", ":", 2),
             "base_url": "https://example.com",
-            "credential_profile": "default",
+            "credential_profile": run.get("credential_profile", "default"),
             "phases": run.get("phases", []),
             "screenshots": [],
         }
+        if run.get("environment"):
+            metadata["environment"] = run["environment"]
         (run_dir / "run_metadata.json").write_text(json.dumps(metadata))
 
     return runs_dir
@@ -1153,7 +1178,7 @@ class TestGenerateRunsIndex:
 
         assert 'class="sortable"' in html
         assert '<span class="sort-arrow">' in html
-        for col in ("Task", "Goal", "Run Datetime", "Status"):
+        for col in ("Task", "Goal", "Environment", "Login", "Run Datetime", "Status"):
             assert f">{col}<" in html
 
     def test_data_sort_value_attributes(self, tmp_path: Path) -> None:
@@ -1192,7 +1217,7 @@ class TestGenerateRunsIndex:
         generate_runs_index(runs_dir)
         html = (runs_dir / "index.html").read_text()
 
-        assert "sortByCol(2, false)" in html
+        assert "sortByCol(4, false)" in html
 
     def test_empty_runs_no_sortable_headers(self, tmp_path: Path) -> None:
         """When there are no runs, the table (and sortable headers) should not appear."""
@@ -1202,6 +1227,29 @@ class TestGenerateRunsIndex:
 
         assert '<th class="sortable">' not in html
         assert "<thead>" not in html
+
+    def test_shows_environment_and_login_columns(self, tmp_path: Path) -> None:
+        runs_dir = _make_runs_dir(tmp_path)
+        generate_runs_index(runs_dir)
+        html = (runs_dir / "index.html").read_text()
+        # Default runs have no environment set, so "default" should appear
+        assert ">default<" in html
+
+    def test_shows_custom_environment_and_login(self, tmp_path: Path) -> None:
+        runs_dir = _make_runs_dir(tmp_path, runs=[
+            {
+                "task_name": "env-test",
+                "timestamp": "2025-07-01T10-00-00",
+                "prompt": "Test in staging",
+                "phases": [{"name": "Login", "outcome": "SUCCESS", "screenshots": []}],
+                "environment": "staging",
+                "credential_profile": "admin",
+            },
+        ])
+        generate_runs_index(runs_dir)
+        html = (runs_dir / "index.html").read_text()
+        assert ">staging<" in html
+        assert ">admin<" in html
 
     def test_generate_report_creates_runs_index(self, tmp_path: Path) -> None:
         """generate_report should also create a runs-level index."""

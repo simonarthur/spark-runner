@@ -344,8 +344,10 @@ def _generate_index_page(
     meta_parts: list[str] = []
     if detail.base_url:
         meta_parts.append(f"Target: {_html_escape(detail.base_url)}")
+    if detail.environment:
+        meta_parts.append(f"Environment: {_html_escape(detail.environment)}")
     if detail.credential_profile:
-        meta_parts.append(f"Profile: {_html_escape(detail.credential_profile)}")
+        meta_parts.append(f"Login: {_html_escape(detail.credential_profile)}")
     if detail.timestamp:
         meta_parts.append(_html_escape(detail.timestamp))
     meta_line = f'<p style="color:var(--muted)">{" | ".join(meta_parts)}</p>' if meta_parts else ""
@@ -1324,8 +1326,8 @@ def _runs_index_js() -> str:
       sortByCol(idx, asc);
     });
   });
-  // Default sort: Run Datetime (column 2) descending (most recent first)
-  sortByCol(2, false);
+  // Default sort: Run Datetime (column 4) descending (most recent first)
+  sortByCol(4, false);
 })();
 """
 
@@ -1365,11 +1367,16 @@ def generate_runs_index(runs_dir: Path) -> Path:
         # Truncate long goals for the table display
         goal_display = goal if len(goal) <= 120 else goal[:117] + "..."
 
+        env_display = run.environment or "default"
+        login_display = run.credential_profile or "default"
+
         status_sort = "0" if run.has_errors else "1"
         rows.append(
             f"<tr>"
             f'<td data-sort-value="{_html_escape(run.task_name)}">{name_cell}</td>'
             f'<td class="goal-cell" data-sort-value="{_html_escape(goal)}" title="{_html_escape(goal)}">{_html_escape(goal_display)}</td>'
+            f'<td data-sort-value="{_html_escape(env_display)}">{_html_escape(env_display)}</td>'
+            f'<td data-sort-value="{_html_escape(login_display)}">{_html_escape(login_display)}</td>'
             f'<td data-sort-value="{_html_escape(run.timestamp)}">{_html_escape(run.timestamp)}</td>'
             f'<td data-sort-value="{status_sort}">{badge}</td>'
             f"</tr>"
@@ -1378,7 +1385,7 @@ def generate_runs_index(runs_dir: Path) -> Path:
     if rows:
         th_tpl = '<th class="sortable">{}<span class="sort-arrow"></span></th>'
         header_row = "<tr>" + "".join(
-            th_tpl.format(h) for h in ("Task", "Goal", "Run Datetime", "Status")
+            th_tpl.format(h) for h in ("Task", "Goal", "Environment", "Login", "Run Datetime", "Status")
         ) + "</tr>"
         table = (
             "<table>\n"

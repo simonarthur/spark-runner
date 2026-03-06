@@ -21,6 +21,8 @@ class RunSummary:
     num_phases: int = 0
     has_errors: bool = False
     prompt: str = ""
+    environment: str = ""
+    credential_profile: str = ""
 
 
 @dataclass
@@ -41,6 +43,7 @@ class RunDetail:
     timestamp: str = ""
     base_url: str = ""
     credential_profile: str = ""
+    environment: str = ""
     run_dir: Path = field(default_factory=lambda: Path())
     goal_file: str | None = None
     phases: list[PhaseDetail] = field(default_factory=list)
@@ -84,12 +87,16 @@ def list_runs(
             num_phases = 0
             has_errors = False
             prompt = ""
+            environment = ""
+            credential_profile = ""
 
             if metadata_path.exists():
                 try:
                     meta: dict[str, Any] = json.loads(metadata_path.read_text())
                     num_phases = len(meta.get("phases", []))
                     prompt = meta.get("prompt", "")
+                    environment = meta.get("environment", "")
+                    credential_profile = meta.get("credential_profile", "")
                     has_errors = any(
                         p.get("outcome") != "SUCCESS" for p in meta.get("phases", [])
                     )
@@ -107,6 +114,8 @@ def list_runs(
                 num_phases=num_phases,
                 has_errors=has_errors,
                 prompt=prompt,
+                environment=environment,
+                credential_profile=credential_profile,
             ))
 
     return summaries
@@ -132,6 +141,7 @@ def get_run_detail(run_dir: Path) -> RunDetail:
             detail.timestamp = meta.get("timestamp", "")
             detail.base_url = meta.get("base_url", "")
             detail.credential_profile = meta.get("credential_profile", "")
+            detail.environment = meta.get("environment", "")
             detail.goal_file = meta.get("goal_file")
 
             for phase_data in meta.get("phases", []):
