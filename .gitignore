@@ -9,3 +9,4 @@ archive/
 goal_summaries/
 tasks/
 spark_runner_data/
+go.sh
