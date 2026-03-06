@@ -248,6 +248,16 @@ def run_setup_wizard(config_path: Path) -> Path:
         set_config_file_permissions(config_path)
 
     click.echo(f"\nConfig written to {config_path}")
+
+    # If the user chose a non-default data directory, remind them to set the
+    # environment variable so spark-runner can find the config.
+    if data_dir != "~/spark_runner":
+        click.echo(
+            f"\nYou chose a custom data directory. "
+            f"Add this to your shell profile so spark-runner can find it:"
+        )
+        click.echo(f"\n  export SPARK_RUNNER_DATA_DIR=\"{resolved_data_dir}\"")
+
     click.echo("\nSetup complete! Try running your first task with:")
     click.echo(f"\n  spark-runner run -p \"Log in and verify the dashboard loads\"")
     click.echo()

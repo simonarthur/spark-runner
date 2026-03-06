@@ -521,6 +521,26 @@ class TestRunSetupWizard:
         assert "Setup complete!" in output
         assert "spark-runner run" in output
 
+    def test_custom_data_dir_shows_env_var_hint(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        data_dir = tmp_path / "custom_data"
+        self._run_wizard(tmp_path, [
+            str(data_dir), "https://example.com", "", "",
+        ])
+        output = capsys.readouterr().out
+        assert "SPARK_RUNNER_DATA_DIR" in output
+        assert str(data_dir) in output
+
+    def test_default_data_dir_no_env_var_hint(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        self._run_wizard(tmp_path, [
+            "~/spark_runner", "https://example.com", "", "",
+        ])
+        output = capsys.readouterr().out
+        assert "SPARK_RUNNER_DATA_DIR" not in output
+
     def test_single_environment(self, tmp_path: Path) -> None:
         data_dir = tmp_path / "data"
         result = self._run_wizard(
