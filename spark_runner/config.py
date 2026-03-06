@@ -282,7 +282,7 @@ def run_setup_wizard(config_path: Path) -> Path:
     # API keys
     click.echo("\n── API Keys ──")
     anthropic_api_key = click.prompt(
-        "Anthropic API key", default="", hide_input=True, type=str,
+        "Anthropic API key", default="", type=str,
     )
     use_browseruse_llm = click.confirm(
         "Use BrowserUse cloud LLM instead of direct Anthropic?", default=False,
@@ -290,7 +290,7 @@ def run_setup_wizard(config_path: Path) -> Path:
     browseruse_api_key = ""
     if use_browseruse_llm:
         browseruse_api_key = click.prompt(
-            "BrowserUse API key", default="", hide_input=True, type=str,
+            "BrowserUse API key", default="", type=str,
         )
 
     # Offer env-var storage when any secrets were provided
