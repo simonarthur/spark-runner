@@ -434,6 +434,10 @@ class TestResolveConfigPath:
 
 
 class TestRunSetupWizard:
+    # IMPORTANT: Always use tmp_path for data directories in these tests.
+    # Never pass "~/spark_runner" or any real home-relative path to
+    # run_setup_wizard — it creates directories on disk and will pollute
+    # the user's home directory.
     def test_writes_valid_yaml(self, tmp_path: Path) -> None:
         config_path = tmp_path / "config.yaml"
         input_values = f"{tmp_path / 'data'}\nhttps://example.com\nme@test.com\nsecret\n"
@@ -479,13 +483,16 @@ class TestRunSetupWizard:
         assert mode != 0o600
 
     def test_uses_defaults_when_accepted(self, tmp_path: Path) -> None:
+        # NOTE: Never use ~/spark_runner here — tests must use tmp_path to
+        # avoid creating real directories in the user's home.
         config_path = tmp_path / "config.yaml"
+        default_dir = str(tmp_path / "spark_runner")
         with patch("click.prompt", side_effect=[
-            "~/spark_runner", "https://sparky-web-dev.vercel.app", "", "",
+            default_dir, "https://sparky-web-dev.vercel.app", "", "",
         ]):
             run_setup_wizard(config_path)
         data = yaml.safe_load(config_path.read_text())
-        assert data["general"]["data_dir"] == "~/spark_runner"
+        assert data["general"]["data_dir"] == default_dir
         assert data["general"]["base_url"] == "https://sparky-web-dev.vercel.app"
 
     def test_returns_config_path(self, tmp_path: Path) -> None:
