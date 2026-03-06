@@ -393,3 +393,28 @@ class TestWriteRunMetadata:
         data = json.loads((tmp_path / "run_metadata.json").read_text())
         # ISO format contains 'T' separator
         assert "T" in data["timestamp"]
+
+    def test_environment_recorded_when_provided(self, tmp_path: Path) -> None:
+        write_run_metadata(
+            run_dir=tmp_path,
+            task_name="t",
+            prompt="p",
+            base_url="https://example.com",
+            credential_profile="default",
+            phases=[],
+            environment="staging",
+        )
+        data = json.loads((tmp_path / "run_metadata.json").read_text())
+        assert data["environment"] == "staging"
+
+    def test_environment_omitted_when_none(self, tmp_path: Path) -> None:
+        write_run_metadata(
+            run_dir=tmp_path,
+            task_name="t",
+            prompt="p",
+            base_url="https://example.com",
+            credential_profile="default",
+            phases=[],
+        )
+        data = json.loads((tmp_path / "run_metadata.json").read_text())
+        assert "environment" not in data

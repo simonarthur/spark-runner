@@ -233,6 +233,7 @@ def write_run_metadata(
     phases: list[dict[str, Any]],
     screenshots: list[ScreenshotRecord] | None = None,
     goal_file: str | None = None,
+    environment: str | None = None,
 ) -> None:
     """Write run_metadata.json to the run directory.
 
@@ -257,6 +258,8 @@ def write_run_metadata(
     }
     if goal_file is not None:
         metadata["goal_file"] = goal_file
+    if environment is not None:
+        metadata["environment"] = environment
 
     for phase in phases:
         phase_entry: dict[str, Any] = {

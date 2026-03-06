@@ -638,6 +638,7 @@ async def run_single(
             ],
             screenshots=all_screenshots,
             goal_file=goal_path.name if goal_path else None,
+            environment=config.active_environment,
         )
 
         try:
