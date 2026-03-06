@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 from typing import Any
 
-from spark_runner.models import CredentialProfile, ModelConfig, SparkConfig
+from spark_runner.models import CredentialProfile, EnvironmentProfile, ModelConfig, SparkConfig
 
 
 def _resolve_path(p: str | Path) -> Path:
@@ -65,6 +65,24 @@ def _parse_models(raw: dict[str, Any]) -> dict[str, ModelConfig]:
     return result
 
 
+def _parse_environments(raw: dict[str, Any]) -> dict[str, EnvironmentProfile]:
+    """Parse the ``environments:`` section of a YAML config."""
+    result: dict[str, EnvironmentProfile] = {}
+    for name, env_data in raw.items():
+        if isinstance(env_data, dict):
+            creds: dict[str, CredentialProfile] = {}
+            raw_creds = env_data.get("credentials", {})
+            if raw_creds:
+                creds = _parse_credentials(raw_creds)
+            result[name] = EnvironmentProfile(
+                name=name,
+                base_url=env_data.get("base_url", ""),
+                is_production=bool(env_data.get("is_production", False)),
+                credentials=creds,
+            )
+    return result
+
+
 def build_config(
     config_path: Path | None = None,
     data_dir: Path | None = None,
@@ -77,6 +95,8 @@ def build_config(
     update_tasks: bool = True,
     knowledge_reuse: bool = True,
     regenerate_tasks: bool = False,
+    env: str | None = None,
+    force_unsafe: bool = False,
 ) -> SparkConfig:
     """Build a ``SparkConfig`` by merging YAML file, env vars, and CLI args.
 
@@ -149,6 +169,31 @@ def build_config(
             else:
                 models[purpose] = ModelConfig(model=model_id)
 
+    # Environments
+    environments: dict[str, EnvironmentProfile] = {}
+    yaml_envs: dict[str, Any] = yaml_data.get("environments", {})
+    if yaml_envs:
+        environments = _parse_environments(yaml_envs)
+
+    # Apply environment overrides when --env is specified
+    active_environment: str | None = None
+    if env is not None:
+        if env not in environments:
+            raise ValueError(
+                f"Unknown environment '{env}'. "
+                f"Available: {', '.join(sorted(environments)) or '(none)'}"
+            )
+        active_environment = env
+        env_profile = environments[env]
+
+        # Environment base_url (CLI --base-url takes priority)
+        if base_url is None and env_profile.base_url:
+            resolved_base_url = env_profile.base_url
+
+        # Environment credentials replace global ones (CLI --credential-profile still takes priority)
+        if env_profile.credentials:
+            credentials = env_profile.credentials
+
     config = SparkConfig(
         data_dir=resolved_data_dir,
         tasks_dir=resolved_data_dir / "tasks",
@@ -158,6 +203,9 @@ def build_config(
         credentials=credentials if credentials else {"default": CredentialProfile()},
         active_credential_profile=credential_profile or "default",
         models=models if models else {},  # __post_init__ fills defaults
+        environments=environments,
+        active_environment=active_environment,
+        force_unsafe=force_unsafe,
         update_summary=update_summary,
         update_tasks=update_tasks,
         knowledge_reuse=knowledge_reuse,

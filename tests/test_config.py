@@ -8,8 +8,8 @@ from unittest.mock import patch
 
 import pytest
 
-from spark_runner.config import build_config, load_config_from_yaml
-from spark_runner.models import SparkConfig
+from spark_runner.config import build_config, load_config_from_yaml, _parse_environments
+from spark_runner.models import EnvironmentProfile, SparkConfig
 
 
 # ── load_config_from_yaml ────────────────────────────────────────────────
@@ -253,3 +253,141 @@ class TestBuildConfigCliOverrides:
     def test_knowledge_reuse_flag(self, tmp_path: Path) -> None:
         config = build_config(data_dir=tmp_path, knowledge_reuse=False)
         assert config.knowledge_reuse is False
+
+
+# ── _parse_environments ──────────────────────────────────────────────────
+
+
+class TestParseEnvironments:
+    def test_parses_environment_profiles(self) -> None:
+        raw = {
+            "dev": {
+                "base_url": "https://dev.example.com",
+                "credentials": {
+                    "default": {"email": "dev@example.com", "password": "devpass"},
+                },
+            },
+            "production": {
+                "base_url": "https://app.example.com",
+                "is_production": True,
+                "credentials": {
+                    "default": {"email": "prod@example.com", "password": "prodpass"},
+                },
+            },
+        }
+        result = _parse_environments(raw)
+        assert "dev" in result
+        assert "production" in result
+        assert result["dev"].base_url == "https://dev.example.com"
+        assert result["dev"].is_production is False
+        assert result["production"].is_production is True
+        assert result["production"].credentials["default"].email == "prod@example.com"
+
+    def test_empty_dict_returns_empty(self) -> None:
+        assert _parse_environments({}) == {}
+
+    def test_non_dict_entries_skipped(self) -> None:
+        result = _parse_environments({"bad": "string_value"})
+        assert result == {}
+
+
+# ── build_config: environment selection ──────────────────────────────────
+
+
+class TestBuildConfigEnvironments:
+    def _write_env_config(self, tmp_path: Path) -> Path:
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(
+            "environments:\n"
+            "  staging:\n"
+            "    base_url: https://staging.example.com\n"
+            "    credentials:\n"
+            "      default:\n"
+            "        email: stage@example.com\n"
+            "        password: stagepass\n"
+            "      admin:\n"
+            "        email: admin@example.com\n"
+            "        password: adminpass\n"
+            "  production:\n"
+            "    base_url: https://app.example.com\n"
+            "    is_production: true\n"
+            "    credentials:\n"
+            "      default:\n"
+            "        email: prod@example.com\n"
+            "        password: prodpass\n"
+        )
+        return config_file
+
+    def test_env_sets_base_url(self, tmp_path: Path) -> None:
+        config_file = self._write_env_config(tmp_path)
+        config = build_config(config_path=config_file, data_dir=tmp_path, env="staging")
+        assert config.base_url == "https://staging.example.com"
+
+    def test_env_sets_credentials(self, tmp_path: Path) -> None:
+        config_file = self._write_env_config(tmp_path)
+        config = build_config(config_path=config_file, data_dir=tmp_path, env="staging")
+        assert "admin" in config.credentials
+        assert config.credentials["default"].email == "stage@example.com"
+
+    def test_cli_base_url_overrides_env(self, tmp_path: Path) -> None:
+        config_file = self._write_env_config(tmp_path)
+        config = build_config(
+            config_path=config_file, data_dir=tmp_path,
+            env="staging", base_url="https://override.example.com",
+        )
+        assert config.base_url == "https://override.example.com"
+
+    def test_unknown_env_raises_value_error(self, tmp_path: Path) -> None:
+        config_file = self._write_env_config(tmp_path)
+        with pytest.raises(ValueError, match="Unknown environment 'nonexistent'"):
+            build_config(config_path=config_file, data_dir=tmp_path, env="nonexistent")
+
+    def test_no_env_uses_global_credentials(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.delenv("USER_EMAIL", raising=False)
+        monkeypatch.delenv("USER_PASSWORD", raising=False)
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(
+            "credentials:\n"
+            "  default:\n"
+            "    email: global@example.com\n"
+            "    password: globalpass\n"
+            "environments:\n"
+            "  staging:\n"
+            "    base_url: https://staging.example.com\n"
+            "    credentials:\n"
+            "      default:\n"
+            "        email: stage@example.com\n"
+            "        password: stagepass\n"
+        )
+        config = build_config(config_path=config_file, data_dir=tmp_path)
+        assert config.credentials["default"].email == "global@example.com"
+        assert config.active_environment is None
+
+    def test_env_sets_active_environment(self, tmp_path: Path) -> None:
+        config_file = self._write_env_config(tmp_path)
+        config = build_config(config_path=config_file, data_dir=tmp_path, env="production")
+        assert config.active_environment == "production"
+        assert config.environments["production"].is_production is True
+
+    def test_force_unsafe_flag(self, tmp_path: Path) -> None:
+        config_file = self._write_env_config(tmp_path)
+        config = build_config(
+            config_path=config_file, data_dir=tmp_path,
+            env="production", force_unsafe=True,
+        )
+        assert config.force_unsafe is True
+
+    def test_environments_parsed_into_config(self, tmp_path: Path) -> None:
+        config_file = self._write_env_config(tmp_path)
+        config = build_config(config_path=config_file, data_dir=tmp_path)
+        assert "staging" in config.environments
+        assert "production" in config.environments
+
+    def test_no_environments_section_backward_compat(self, tmp_path: Path) -> None:
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text("general:\n  base_url: https://example.com\n")
+        config = build_config(config_path=config_file, data_dir=tmp_path)
+        assert config.environments == {}
+        assert config.active_environment is None
