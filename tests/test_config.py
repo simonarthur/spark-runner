@@ -535,9 +535,13 @@ class TestRunSetupWizard:
     def test_default_data_dir_no_env_var_hint(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
     ) -> None:
-        self._run_wizard(tmp_path, [
-            "~/spark_runner", "https://example.com", "", "",
-        ])
+        # NOTE: We must redirect _resolve_path so "~/spark_runner" doesn't
+        # create real directories in the user's home.
+        fake_home = tmp_path / "fake_spark_runner"
+        with patch("spark_runner.config._resolve_path", return_value=fake_home):
+            self._run_wizard(tmp_path, [
+                "~/spark_runner", "https://example.com", "", "",
+            ])
         output = capsys.readouterr().out
         assert "SPARK_RUNNER_DATA_DIR" not in output
 
