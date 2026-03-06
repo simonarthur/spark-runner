@@ -112,6 +112,7 @@ def _build_config_yaml(
     base_url: str,
     email: str,
     password: str,
+    extra_credentials: list[dict[str, str]],
     environments: list[dict[str, str]],
 ) -> str:
     """Build the config.yaml content string with optional environments."""
@@ -125,6 +126,11 @@ def _build_config_yaml(
         f'    email: "{email}"',
         f'    password: "{password}"',
     ]
+
+    for cred in extra_credentials:
+        lines.append(f"  {cred['name']}:")
+        lines.append(f'    email: "{cred.get("email", "")}"')
+        lines.append(f'    password: "{cred.get("password", "")}"')
 
     if environments:
         lines.append("")
@@ -208,6 +214,23 @@ def run_setup_wizard(config_path: Path) -> Path:
         "Default password for the test website", default="", hide_input=True, type=str,
     )
 
+    # Optional additional credential profiles
+    extra_credentials: list[dict[str, str]] = []
+    if click.confirm("\nSet up additional logins?", default=False):
+        while True:
+            cred_name = click.prompt("  Profile name (e.g. admin, viewer)", type=str)
+            cred_email = click.prompt(f"  Username for '{cred_name}'", default="", type=str)
+            cred_password = click.prompt(
+                f"  Password for '{cred_name}'", default="", hide_input=True, type=str,
+            )
+            extra_credentials.append({
+                "name": cred_name,
+                "email": cred_email,
+                "password": cred_password,
+            })
+            if not click.confirm("\n  Add another login?", default=False):
+                break
+
     # Optional multi-environment setup
     environments: list[dict[str, str]] = []
     if click.confirm(
@@ -234,12 +257,17 @@ def run_setup_wizard(config_path: Path) -> Path:
         base_url=base_url,
         email=email,
         password=password,
+        extra_credentials=extra_credentials,
         environments=environments,
     )
     config_path.write_text(config_content)
 
     # Restrict permissions when credentials are present
     has_credentials = bool(email or password)
+    if not has_credentials:
+        has_credentials = any(
+            c.get("email") or c.get("password") for c in extra_credentials
+        )
     if not has_credentials:
         has_credentials = any(
             env.get("email") or env.get("password") for env in environments

@@ -444,13 +444,15 @@ class TestRunSetupWizard:
     ) -> Path:
         """Helper: run the wizard with canned prompt/confirm responses.
 
-        ``confirms`` maps to the click.confirm calls:
-        - [0] = "set up more environments?"
-        - [1..] = "add another environment?" (if applicable)
-        Defaults to [False] (decline environments).
+        ``confirms`` maps to the click.confirm calls in order:
+        - [0] = "set up additional logins?"
+        - ... (if yes: "add another login?" after each)
+        - [N] = "set up more environments?"
+        - ... (if yes: "is production?", "add another environment?" after each)
+        Defaults to [False, False] (decline both additional logins and envs).
         """
         if confirms is None:
-            confirms = [False]
+            confirms = [False, False]
         with patch("click.prompt", side_effect=prompts), \
              patch("click.confirm", side_effect=confirms):
             return run_setup_wizard(tmp_path / "ignored.yaml")
@@ -549,14 +551,12 @@ class TestRunSetupWizard:
         data_dir = tmp_path / "data"
         result = self._run_wizard(
             tmp_path,
-            # base prompts + env prompts:
-            # data_dir, base_url, email, password, env_name, env_url, env_email, env_password
             [
                 str(data_dir), "https://example.com", "", "",
                 "staging", "https://staging.example.com", "stage@test.com", "stagepass",
             ],
-            # yes to "set up environments?", no to "is production?", no to "add another?"
-            confirms=[True, False, False],
+            # no logins, yes envs, no is_prod, no add another env
+            confirms=[False, True, False, False],
         )
         data = yaml.safe_load(result.read_text())
         assert "environments" in data
@@ -574,8 +574,8 @@ class TestRunSetupWizard:
                 "staging", "https://staging.example.com", "", "",
                 "production", "https://app.example.com", "prod@test.com", "prodpass",
             ],
-            # yes environments, no is_prod, yes add another, yes is_prod, no add another
-            confirms=[True, False, True, True, False],
+            # no logins, yes envs, no is_prod, yes add another, yes is_prod, no add another
+            confirms=[False, True, False, True, True, False],
         )
         data = yaml.safe_load(result.read_text())
         assert "staging" in data["environments"]
@@ -598,6 +598,54 @@ class TestRunSetupWizard:
                 str(data_dir), "https://example.com", "", "",
                 "staging", "https://staging.example.com", "s@test.com", "pw",
             ],
+            # no logins, yes envs, no is_prod, no add another env
+            confirms=[False, True, False, False],
+        )
+        mode = result.stat().st_mode & 0o777
+        assert mode == 0o600
+
+    def test_additional_logins(self, tmp_path: Path) -> None:
+        data_dir = tmp_path / "data"
+        result = self._run_wizard(
+            tmp_path,
+            [
+                str(data_dir), "https://example.com", "default@test.com", "defpw",
+                "admin", "admin@test.com", "adminpw",
+            ],
+            # yes logins, no add another login, no envs
+            confirms=[True, False, False],
+        )
+        data = yaml.safe_load(result.read_text())
+        assert "admin" in data["credentials"]
+        assert data["credentials"]["admin"]["email"] == "admin@test.com"
+        assert data["credentials"]["admin"]["password"] == "adminpw"
+        assert data["credentials"]["default"]["email"] == "default@test.com"
+
+    def test_multiple_additional_logins(self, tmp_path: Path) -> None:
+        data_dir = tmp_path / "data"
+        result = self._run_wizard(
+            tmp_path,
+            [
+                str(data_dir), "https://example.com", "", "",
+                "admin", "admin@test.com", "adminpw",
+                "viewer", "viewer@test.com", "viewpw",
+            ],
+            # yes logins, yes add another, no add another, no envs
+            confirms=[True, True, False, False],
+        )
+        data = yaml.safe_load(result.read_text())
+        assert "admin" in data["credentials"]
+        assert "viewer" in data["credentials"]
+
+    def test_additional_login_credentials_trigger_permissions(self, tmp_path: Path) -> None:
+        data_dir = tmp_path / "data"
+        result = self._run_wizard(
+            tmp_path,
+            [
+                str(data_dir), "https://example.com", "", "",
+                "admin", "admin@test.com", "pw",
+            ],
+            # yes logins, no add another, no envs
             confirms=[True, False, False],
         )
         mode = result.stat().st_mode & 0o777
