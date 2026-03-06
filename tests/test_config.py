@@ -153,7 +153,7 @@ class TestBuildConfigEnvVarOverrides:
     ) -> None:
         config_file = tmp_path / "config.yaml"
         config_file.write_text("general:\n  base_url: https://yaml.example.com\n")
-        monkeypatch.setenv("SPARK_BASE_URL", "https://env.example.com")
+        monkeypatch.setenv("SPARK_RUNNER_BASE_URL", "https://env.example.com")
         config = build_config(config_path=config_file, data_dir=tmp_path)
         assert config.base_url == "https://env.example.com"
 
@@ -179,7 +179,7 @@ class TestBuildConfigEnvVarOverrides:
     ) -> None:
         config_file = tmp_path / "env_config.yaml"
         config_file.write_text("general:\n  base_url: https://fromenv.example.com\n")
-        monkeypatch.setenv("SPARK_CONFIG", str(config_file))
+        monkeypatch.setenv("SPARK_RUNNER_CONFIG", str(config_file))
         config = build_config(data_dir=tmp_path)
         assert config.base_url == "https://fromenv.example.com"
 
@@ -191,7 +191,7 @@ class TestBuildConfigCliOverrides:
     def test_base_url_arg_overrides_env(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setenv("SPARK_BASE_URL", "https://env.example.com")
+        monkeypatch.setenv("SPARK_RUNNER_BASE_URL", "https://env.example.com")
         config = build_config(data_dir=tmp_path, base_url="https://cli.example.com")
         assert config.base_url == "https://cli.example.com"
 

@@ -41,15 +41,15 @@ def _patch_globals(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
 
     - Module globals get deterministic values.
     - Environment variables that influence config resolution
-      (``SPARK_RUNNER_DATA_DIR``, ``SPARK_CONFIG``) are cleared so tests
+      (``SPARK_RUNNER_DATA_DIR``, ``SPARK_RUNNER_CONFIG``) are cleared so tests
       never pick up the developer's local settings.
     """
     monkeypatch.setattr(spark_runner, "HOST", "https://test.example.com")
     monkeypatch.setattr(spark_runner, "USER_EMAIL", "test@example.com")
     monkeypatch.setattr(spark_runner, "USER_PASSWORD", "test-password-123")
     monkeypatch.delenv("SPARK_RUNNER_DATA_DIR", raising=False)
-    monkeypatch.delenv("SPARK_CONFIG", raising=False)
-    monkeypatch.delenv("SPARK_BASE_URL", raising=False)
+    monkeypatch.delenv("SPARK_RUNNER_CONFIG", raising=False)
+    monkeypatch.delenv("SPARK_RUNNER_BASE_URL", raising=False)
 
 
 # ── Filesystem isolation fixtures ────────────────────────────────────────

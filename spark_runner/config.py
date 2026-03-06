@@ -104,7 +104,7 @@ def build_config(
     """
     # Determine config file location
     if config_path is None:
-        env_config = os.environ.get("SPARK_CONFIG")
+        env_config = os.environ.get("SPARK_RUNNER_CONFIG")
         if env_config:
             config_path = _resolve_path(env_config)
         else:
@@ -131,8 +131,8 @@ def build_config(
     resolved_base_url: str
     if base_url is not None:
         resolved_base_url = base_url
-    elif os.environ.get("SPARK_BASE_URL"):
-        resolved_base_url = os.environ["SPARK_BASE_URL"]
+    elif os.environ.get("SPARK_RUNNER_BASE_URL"):
+        resolved_base_url = os.environ["SPARK_RUNNER_BASE_URL"]
     elif general.get("base_url"):
         resolved_base_url = general["base_url"]
     else:
