@@ -137,10 +137,13 @@ def _build_config_yaml(
     extra_credentials: list[dict[str, str]],
     environments: list[dict[str, str]],
     use_env_vars: bool = False,
+    anthropic_api_key: str = "",
+    use_browseruse_llm: bool = False,
+    browseruse_api_key: str = "",
 ) -> str:
     """Build the config.yaml content string with optional environments."""
 
-    def _cred_value(value: str, env_var: str) -> str:
+    def _secret_value(value: str, env_var: str) -> str:
         """Return an env-var reference or a quoted literal."""
         if use_env_vars and value:
             return f"${env_var}"
@@ -150,21 +153,26 @@ def _build_config_yaml(
         "general:",
         f"  data_dir: {data_dir}",
         f"  base_url: {base_url}",
+        f"  use_browseruse_llm: {str(use_browseruse_llm).lower()}",
+        "",
+        "api_keys:",
+        f'  anthropic: {_secret_value(anthropic_api_key, "ANTHROPIC_API_KEY")}',
+        f'  browseruse: {_secret_value(browseruse_api_key, "BROWSER_USE_API_KEY")}',
         "",
         "credentials:",
         "  default:",
-        f'    email: {_cred_value(email, _env_var_name("DEFAULT", "EMAIL"))}',
-        f'    password: {_cred_value(password, _env_var_name("DEFAULT", "PASSWORD"))}',
+        f'    email: {_secret_value(email, _env_var_name("DEFAULT", "EMAIL"))}',
+        f'    password: {_secret_value(password, _env_var_name("DEFAULT", "PASSWORD"))}',
     ]
 
     for cred in extra_credentials:
         cname = cred["name"]
         lines.append(f"  {cname}:")
         lines.append(
-            f'    email: {_cred_value(cred.get("email", ""), _env_var_name(cname, "EMAIL"))}'
+            f'    email: {_secret_value(cred.get("email", ""), _env_var_name(cname, "EMAIL"))}'
         )
         lines.append(
-            f'    password: {_cred_value(cred.get("password", ""), _env_var_name(cname, "PASSWORD"))}'
+            f'    password: {_secret_value(cred.get("password", ""), _env_var_name(cname, "PASSWORD"))}'
         )
 
     if environments:
@@ -180,10 +188,10 @@ def _build_config_yaml(
                 lines.append("    credentials:")
                 lines.append("      default:")
                 lines.append(
-                    f'        email: {_cred_value(env.get("email", ""), _env_var_name(ename, "DEFAULT", "EMAIL"))}'
+                    f'        email: {_secret_value(env.get("email", ""), _env_var_name(ename, "DEFAULT", "EMAIL"))}'
                 )
                 lines.append(
-                    f'        password: {_cred_value(env.get("password", ""), _env_var_name(ename, "DEFAULT", "PASSWORD"))}'
+                    f'        password: {_secret_value(env.get("password", ""), _env_var_name(ename, "DEFAULT", "PASSWORD"))}'
                 )
     else:
         lines.extend([
@@ -271,12 +279,31 @@ def run_setup_wizard(config_path: Path) -> Path:
             if not click.confirm("\n  Add another login?", default=False):
                 break
 
-    # Offer env-var storage when any password was provided
-    any_password = bool(password) or any(c.get("password") for c in extra_credentials)
+    # API keys
+    click.echo("\n── API Keys ──")
+    anthropic_api_key = click.prompt(
+        "Anthropic API key", default="", hide_input=True, type=str,
+    )
+    use_browseruse_llm = click.confirm(
+        "Use BrowserUse cloud LLM instead of direct Anthropic?", default=False,
+    )
+    browseruse_api_key = ""
+    if use_browseruse_llm:
+        browseruse_api_key = click.prompt(
+            "BrowserUse API key", default="", hide_input=True, type=str,
+        )
+
+    # Offer env-var storage when any secrets were provided
+    has_any_secret = (
+        bool(password)
+        or any(c.get("password") for c in extra_credentials)
+        or bool(anthropic_api_key)
+        or bool(browseruse_api_key)
+    )
     use_env_vars = False
-    if any_password:
+    if has_any_secret:
         use_env_vars = click.confirm(
-            "\nStore credentials as environment variable references instead of plaintext?",
+            "\nStore secrets as environment variable references instead of plaintext?",
             default=True,
         )
 
@@ -309,22 +336,27 @@ def run_setup_wizard(config_path: Path) -> Path:
         extra_credentials=extra_credentials,
         environments=environments,
         use_env_vars=use_env_vars,
+        anthropic_api_key=anthropic_api_key,
+        use_browseruse_llm=use_browseruse_llm,
+        browseruse_api_key=browseruse_api_key,
     )
     config_path.write_text(config_content)
 
-    # Restrict permissions when plaintext credentials are present
-    has_plaintext_credentials = False
+    # Restrict permissions when plaintext secrets are present
+    has_plaintext_secrets = False
     if not use_env_vars:
-        has_plaintext_credentials = bool(email or password)
-        if not has_plaintext_credentials:
-            has_plaintext_credentials = any(
+        has_plaintext_secrets = bool(
+            email or password or anthropic_api_key or browseruse_api_key
+        )
+        if not has_plaintext_secrets:
+            has_plaintext_secrets = any(
                 c.get("email") or c.get("password") for c in extra_credentials
             )
-        if not has_plaintext_credentials:
-            has_plaintext_credentials = any(
+        if not has_plaintext_secrets:
+            has_plaintext_secrets = any(
                 env.get("email") or env.get("password") for env in environments
             )
-    if has_plaintext_credentials:
+    if has_plaintext_secrets:
         set_config_file_permissions(config_path)
 
     click.echo(f"\nConfig written to {config_path}")
@@ -335,6 +367,10 @@ def run_setup_wizard(config_path: Path) -> Path:
             "\nAdd these exports to your shell profile "
             "(e.g. ~/.bashrc, ~/.zshrc, or .env):"
         )
+        if anthropic_api_key:
+            click.echo(f'  export ANTHROPIC_API_KEY="{anthropic_api_key}"')
+        if browseruse_api_key:
+            click.echo(f'  export BROWSER_USE_API_KEY="{browseruse_api_key}"')
         if email:
             click.echo(f'  export {_env_var_name("DEFAULT", "EMAIL")}="{email}"')
         if password:
@@ -439,6 +475,12 @@ def build_config(
         if env_password:
             credentials["default"].password = env_password
 
+    # API keys
+    yaml_api_keys: dict[str, Any] = yaml_data.get("api_keys", {})
+    anthropic_api_key = _resolve_value(yaml_api_keys.get("anthropic", ""))
+    browseruse_api_key = _resolve_value(yaml_api_keys.get("browseruse", ""))
+    use_browseruse_llm = bool(general.get("use_browseruse_llm", False))
+
     # Models
     models: dict[str, ModelConfig] = {}
     yaml_models: dict[str, Any] = yaml_data.get("models", {})
@@ -490,6 +532,9 @@ def build_config(
         environments=environments,
         active_environment=active_environment,
         force_unsafe=force_unsafe,
+        anthropic_api_key=anthropic_api_key,
+        use_browseruse_llm=use_browseruse_llm,
+        browseruse_api_key=browseruse_api_key,
         update_summary=update_summary,
         update_tasks=update_tasks,
         knowledge_reuse=knowledge_reuse,

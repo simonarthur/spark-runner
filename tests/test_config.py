@@ -446,17 +446,26 @@ class TestRunSetupWizard:
     ) -> Path:
         """Helper: run the wizard with canned prompt/confirm responses.
 
-        ``confirms`` maps to the click.confirm calls in order:
-        - [0] = "set up additional logins?"
+        ``prompts`` maps to click.prompt calls:
+        - data_dir, base_url, email, password
+        - (if additional logins: profile_name, username, password per each)
+        - anthropic_api_key
+        - (if use_browseruse_llm: browseruse_api_key)
+        - (if environments: env prompts)
+
+        ``confirms`` maps to click.confirm calls:
+        - "set up additional logins?"
         - ... (if yes: "add another login?" after each)
-        - [?] = "store as env var references?" (only when a password was given)
-        - [N] = "set up more environments?"
+        - "Use BrowserUse cloud LLM?"
+        - "store secrets as env var references?" (only when secrets present)
+        - "set up more environments?"
         - ... (if yes: "is production?", "add another environment?" after each)
-        Defaults to [False, False] (decline both additional logins and envs —
-        only valid when no password is provided).
+
+        Defaults to [False, False, False] (no logins, no BrowserUse, no envs —
+        only valid when no secrets are provided).
         """
         if confirms is None:
-            confirms = [False, False]
+            confirms = [False, False, False]
         with patch("click.prompt", side_effect=prompts), \
              patch("click.confirm", side_effect=confirms):
             return run_setup_wizard(tmp_path / "ignored.yaml")
@@ -465,9 +474,9 @@ class TestRunSetupWizard:
         data_dir = tmp_path / "data"
         result = self._run_wizard(
             tmp_path,
-            [str(data_dir), "https://example.com", "me@test.com", "secret"],
-            # no logins, decline env-vars, no envs
-            confirms=[False, False, False],
+            [str(data_dir), "https://example.com", "me@test.com", "secret", ""],
+            # no logins, no browseruse, decline env-vars, no envs
+            confirms=[False, False, False, False],
         )
         expected = data_dir / "config.yaml"
         assert result == expected
@@ -481,7 +490,7 @@ class TestRunSetupWizard:
     def test_creates_data_directories(self, tmp_path: Path) -> None:
         data_dir = tmp_path / "mydata"
         self._run_wizard(tmp_path, [
-            str(data_dir), "https://example.com", "", "",
+            str(data_dir), "https://example.com", "", "", "",
         ])
         assert (data_dir / "tasks").is_dir()
         assert (data_dir / "goal_summaries").is_dir()
@@ -491,9 +500,9 @@ class TestRunSetupWizard:
         data_dir = tmp_path / "data"
         result = self._run_wizard(
             tmp_path,
-            [str(data_dir), "https://example.com", "user@test.com", "pw"],
-            # no logins, decline env-vars, no envs
-            confirms=[False, False, False],
+            [str(data_dir), "https://example.com", "user@test.com", "pw", ""],
+            # no logins, no browseruse, decline env-vars, no envs
+            confirms=[False, False, False, False],
         )
         mode = result.stat().st_mode & 0o777
         assert mode == 0o600
@@ -501,7 +510,7 @@ class TestRunSetupWizard:
     def test_skips_permissions_when_no_credentials(self, tmp_path: Path) -> None:
         data_dir = tmp_path / "data"
         result = self._run_wizard(tmp_path, [
-            str(data_dir), "https://example.com", "", "",
+            str(data_dir), "https://example.com", "", "", "",
         ])
         mode = result.stat().st_mode & 0o777
         assert mode != 0o600
@@ -511,7 +520,7 @@ class TestRunSetupWizard:
         # avoid creating real directories in the user's home.
         default_dir = str(tmp_path / "spark_runner")
         result = self._run_wizard(tmp_path, [
-            default_dir, "https://sparky-web-dev.vercel.app", "", "",
+            default_dir, "https://sparky-web-dev.vercel.app", "", "", "",
         ])
         data = yaml.safe_load(result.read_text())
         assert data["general"]["data_dir"] == default_dir
@@ -520,14 +529,14 @@ class TestRunSetupWizard:
     def test_returns_config_inside_data_dir(self, tmp_path: Path) -> None:
         data_dir = tmp_path / "data"
         result = self._run_wizard(tmp_path, [
-            str(data_dir), "https://example.com", "", "",
+            str(data_dir), "https://example.com", "", "", "",
         ])
         assert result == data_dir / "config.yaml"
 
     def test_shows_completion_message(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         data_dir = tmp_path / "data"
         self._run_wizard(tmp_path, [
-            str(data_dir), "https://example.com", "", "",
+            str(data_dir), "https://example.com", "", "", "",
         ])
         output = capsys.readouterr().out
         assert "Setup complete!" in output
@@ -538,7 +547,7 @@ class TestRunSetupWizard:
     ) -> None:
         data_dir = tmp_path / "custom_data"
         self._run_wizard(tmp_path, [
-            str(data_dir), "https://example.com", "", "",
+            str(data_dir), "https://example.com", "", "", "",
         ])
         output = capsys.readouterr().out
         assert "SPARK_RUNNER_DATA_DIR" in output
@@ -552,7 +561,7 @@ class TestRunSetupWizard:
         fake_home = tmp_path / "fake_spark_runner"
         with patch("spark_runner.config._resolve_path", return_value=fake_home):
             self._run_wizard(tmp_path, [
-                "~/spark_runner", "https://example.com", "", "",
+                "~/spark_runner", "https://example.com", "", "", "",
             ])
         output = capsys.readouterr().out
         assert "SPARK_RUNNER_DATA_DIR" not in output
@@ -562,11 +571,11 @@ class TestRunSetupWizard:
         result = self._run_wizard(
             tmp_path,
             [
-                str(data_dir), "https://example.com", "", "",
+                str(data_dir), "https://example.com", "", "", "",
                 "staging", "https://staging.example.com", "stage@test.com", "stagepass",
             ],
-            # no logins, yes envs, no is_prod, no add another env
-            confirms=[False, True, False, False],
+            # no logins, no browseruse, yes envs, no is_prod, no add another env
+            confirms=[False, False, True, False, False],
         )
         data = yaml.safe_load(result.read_text())
         assert "environments" in data
@@ -580,12 +589,12 @@ class TestRunSetupWizard:
         result = self._run_wizard(
             tmp_path,
             [
-                str(data_dir), "https://example.com", "", "",
+                str(data_dir), "https://example.com", "", "", "",
                 "staging", "https://staging.example.com", "", "",
                 "production", "https://app.example.com", "prod@test.com", "prodpass",
             ],
-            # no logins, yes envs, no is_prod, yes add another, yes is_prod, no add another
-            confirms=[False, True, False, True, True, False],
+            # no logins, no browseruse, yes envs, no is_prod, yes add another, yes is_prod, no add another
+            confirms=[False, False, True, False, True, True, False],
         )
         data = yaml.safe_load(result.read_text())
         assert "staging" in data["environments"]
@@ -595,7 +604,7 @@ class TestRunSetupWizard:
     def test_no_environments_produces_comments(self, tmp_path: Path) -> None:
         data_dir = tmp_path / "data"
         result = self._run_wizard(tmp_path, [
-            str(data_dir), "https://example.com", "", "",
+            str(data_dir), "https://example.com", "", "", "",
         ])
         raw = result.read_text()
         assert "# environments:" in raw
@@ -605,11 +614,11 @@ class TestRunSetupWizard:
         result = self._run_wizard(
             tmp_path,
             [
-                str(data_dir), "https://example.com", "", "",
+                str(data_dir), "https://example.com", "", "", "",
                 "staging", "https://staging.example.com", "s@test.com", "pw",
             ],
-            # no logins, yes envs, no is_prod, no add another env
-            confirms=[False, True, False, False],
+            # no logins, no browseruse, yes envs, no is_prod, no add another env
+            confirms=[False, False, True, False, False],
         )
         mode = result.stat().st_mode & 0o777
         assert mode == 0o600
@@ -620,10 +629,10 @@ class TestRunSetupWizard:
             tmp_path,
             [
                 str(data_dir), "https://example.com", "default@test.com", "defpw",
-                "admin", "admin@test.com", "adminpw",
+                "admin", "admin@test.com", "adminpw", "",
             ],
-            # yes logins, no add another, decline env-vars, no envs
-            confirms=[True, False, False, False],
+            # yes logins, no add another, no browseruse, decline env-vars, no envs
+            confirms=[True, False, False, False, False],
         )
         data = yaml.safe_load(result.read_text())
         assert "admin" in data["credentials"]
@@ -638,10 +647,10 @@ class TestRunSetupWizard:
             [
                 str(data_dir), "https://example.com", "", "",
                 "admin", "admin@test.com", "adminpw",
-                "viewer", "viewer@test.com", "viewpw",
+                "viewer", "viewer@test.com", "viewpw", "",
             ],
-            # yes logins, yes add another, no add another, decline env-vars, no envs
-            confirms=[True, True, False, False, False],
+            # yes logins, yes add another, no add another, no browseruse, decline env-vars, no envs
+            confirms=[True, True, False, False, False, False],
         )
         data = yaml.safe_load(result.read_text())
         assert "admin" in data["credentials"]
@@ -653,10 +662,10 @@ class TestRunSetupWizard:
             tmp_path,
             [
                 str(data_dir), "https://example.com", "", "",
-                "admin", "admin@test.com", "pw",
+                "admin", "admin@test.com", "pw", "",
             ],
-            # yes logins, no add another, decline env-vars, no envs
-            confirms=[True, False, False, False],
+            # yes logins, no add another, no browseruse, decline env-vars, no envs
+            confirms=[True, False, False, False, False],
         )
         mode = result.stat().st_mode & 0o777
         assert mode == 0o600
@@ -751,9 +760,9 @@ class TestWizardEnvVarMode:
         data_dir = tmp_path / "data"
         result = self._run_wizard(
             tmp_path,
-            [str(data_dir), "https://example.com", "me@test.com", "secret"],
-            # no logins, accept env-vars, no envs
-            confirms=[False, True, False],
+            [str(data_dir), "https://example.com", "me@test.com", "secret", ""],
+            # no logins, no browseruse, accept env-vars, no envs
+            confirms=[False, False, True, False],
         )
         data = yaml.safe_load(result.read_text())
         assert data["credentials"]["default"]["email"] == "$SPARK_RUNNER_DEFAULT_EMAIL"
@@ -765,9 +774,9 @@ class TestWizardEnvVarMode:
         data_dir = tmp_path / "data"
         self._run_wizard(
             tmp_path,
-            [str(data_dir), "https://example.com", "me@test.com", "secret"],
-            # no logins, accept env-vars, no envs
-            confirms=[False, True, False],
+            [str(data_dir), "https://example.com", "me@test.com", "secret", ""],
+            # no logins, no browseruse, accept env-vars, no envs
+            confirms=[False, False, True, False],
         )
         output = capsys.readouterr().out
         assert 'export SPARK_RUNNER_DEFAULT_PASSWORD="secret"' in output
@@ -777,9 +786,9 @@ class TestWizardEnvVarMode:
         data_dir = tmp_path / "data"
         result = self._run_wizard(
             tmp_path,
-            [str(data_dir), "https://example.com", "me@test.com", "secret"],
-            # no logins, accept env-vars, no envs
-            confirms=[False, True, False],
+            [str(data_dir), "https://example.com", "me@test.com", "secret", ""],
+            # no logins, no browseruse, accept env-vars, no envs
+            confirms=[False, False, True, False],
         )
         mode = result.stat().st_mode & 0o777
         assert mode != 0o600
@@ -788,9 +797,9 @@ class TestWizardEnvVarMode:
         data_dir = tmp_path / "data"
         result = self._run_wizard(
             tmp_path,
-            [str(data_dir), "https://example.com", "me@test.com", "secret"],
-            # no logins, decline env-vars, no envs
-            confirms=[False, False, False],
+            [str(data_dir), "https://example.com", "me@test.com", "secret", ""],
+            # no logins, no browseruse, decline env-vars, no envs
+            confirms=[False, False, False, False],
         )
         data = yaml.safe_load(result.read_text())
         assert data["credentials"]["default"]["password"] == "secret"
@@ -803,10 +812,10 @@ class TestWizardEnvVarMode:
             tmp_path,
             [
                 str(data_dir), "https://example.com", "me@test.com", "secret",
-                "admin", "admin@test.com", "adminpw",
+                "admin", "admin@test.com", "adminpw", "",
             ],
-            # yes logins, no add another, accept env-vars, no envs
-            confirms=[True, False, True, False],
+            # yes logins, no add another, no browseruse, accept env-vars, no envs
+            confirms=[True, False, False, True, False],
         )
         data = yaml.safe_load(result.read_text())
         assert data["credentials"]["admin"]["password"] == "$SPARK_RUNNER_ADMIN_PASSWORD"
@@ -814,13 +823,140 @@ class TestWizardEnvVarMode:
         assert 'export SPARK_RUNNER_ADMIN_PASSWORD="adminpw"' in output
 
     def test_no_password_skips_env_var_prompt(self, tmp_path: Path) -> None:
-        """When no password is provided, the env-var prompt is not shown."""
+        """When no password or API keys provided, env-var prompt is not shown."""
         data_dir = tmp_path / "data"
         result = self._run_wizard(
             tmp_path,
-            [str(data_dir), "https://example.com", "me@test.com", ""],
-            # no logins (no password → no env-var prompt), no envs
-            confirms=[False, False],
+            [str(data_dir), "https://example.com", "me@test.com", "", ""],
+            # no logins, no browseruse, no envs
+            confirms=[False, False, False],
         )
         data = yaml.safe_load(result.read_text())
         assert data["credentials"]["default"]["email"] == "me@test.com"
+
+
+# ── API key configuration ────────────────────────────────────────────────
+
+
+class TestBuildConfigApiKeys:
+    def test_api_keys_loaded_from_yaml(self, tmp_path: Path) -> None:
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(
+            "api_keys:\n"
+            "  anthropic: sk-ant-test123\n"
+            "  browseruse: bu-test456\n"
+            "general:\n"
+            "  use_browseruse_llm: true\n"
+        )
+        config = build_config(config_path=config_file, data_dir=tmp_path)
+        assert config.anthropic_api_key == "sk-ant-test123"
+        assert config.browseruse_api_key == "bu-test456"
+        assert config.use_browseruse_llm is True
+
+    def test_api_keys_resolve_env_vars(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-from-env")
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(
+            "api_keys:\n"
+            "  anthropic: $ANTHROPIC_API_KEY\n"
+        )
+        config = build_config(config_path=config_file, data_dir=tmp_path)
+        assert config.anthropic_api_key == "sk-ant-from-env"
+
+    def test_missing_api_keys_default_to_empty(self, tmp_path: Path) -> None:
+        config = build_config(data_dir=tmp_path)
+        assert config.anthropic_api_key == ""
+        assert config.browseruse_api_key == ""
+        assert config.use_browseruse_llm is False
+
+    def test_use_browseruse_llm_defaults_to_false(self, tmp_path: Path) -> None:
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text("general:\n  base_url: https://example.com\n")
+        config = build_config(config_path=config_file, data_dir=tmp_path)
+        assert config.use_browseruse_llm is False
+
+
+class TestWizardApiKeys:
+    def _run_wizard(
+        self, tmp_path: Path, prompts: list[str],
+        confirms: list[bool],
+    ) -> Path:
+        with patch("click.prompt", side_effect=prompts), \
+             patch("click.confirm", side_effect=confirms):
+            return run_setup_wizard(tmp_path / "ignored.yaml")
+
+    def test_anthropic_key_written_to_config(self, tmp_path: Path) -> None:
+        data_dir = tmp_path / "data"
+        result = self._run_wizard(
+            tmp_path,
+            [str(data_dir), "https://example.com", "", "", "sk-ant-test"],
+            # no logins, no browseruse, decline env-vars, no envs
+            confirms=[False, False, False, False],
+        )
+        data = yaml.safe_load(result.read_text())
+        assert data["api_keys"]["anthropic"] == "sk-ant-test"
+
+    def test_browseruse_key_written_when_enabled(self, tmp_path: Path) -> None:
+        data_dir = tmp_path / "data"
+        result = self._run_wizard(
+            tmp_path,
+            [str(data_dir), "https://example.com", "", "", "sk-ant-test", "bu-key123"],
+            # no logins, yes browseruse, decline env-vars, no envs
+            confirms=[False, True, False, False],
+        )
+        data = yaml.safe_load(result.read_text())
+        assert data["general"]["use_browseruse_llm"] is True
+        assert data["api_keys"]["browseruse"] == "bu-key123"
+
+    def test_api_key_triggers_permissions(self, tmp_path: Path) -> None:
+        data_dir = tmp_path / "data"
+        result = self._run_wizard(
+            tmp_path,
+            [str(data_dir), "https://example.com", "", "", "sk-ant-test"],
+            # no logins, no browseruse, decline env-vars, no envs
+            confirms=[False, False, False, False],
+        )
+        mode = result.stat().st_mode & 0o777
+        assert mode == 0o600
+
+    def test_api_key_triggers_env_var_prompt(self, tmp_path: Path) -> None:
+        """An API key alone (no password) should trigger the env-var prompt."""
+        data_dir = tmp_path / "data"
+        result = self._run_wizard(
+            tmp_path,
+            [str(data_dir), "https://example.com", "", "", "sk-ant-test"],
+            # no logins, no browseruse, accept env-vars, no envs
+            confirms=[False, False, True, False],
+        )
+        data = yaml.safe_load(result.read_text())
+        assert data["api_keys"]["anthropic"] == "$ANTHROPIC_API_KEY"
+
+    def test_api_key_env_var_export_hints(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        data_dir = tmp_path / "data"
+        self._run_wizard(
+            tmp_path,
+            [str(data_dir), "https://example.com", "", "", "sk-ant-test", "bu-key123"],
+            # no logins, yes browseruse, accept env-vars, no envs
+            confirms=[False, True, True, False],
+        )
+        output = capsys.readouterr().out
+        assert 'export ANTHROPIC_API_KEY="sk-ant-test"' in output
+        assert 'export BROWSER_USE_API_KEY="bu-key123"' in output
+
+    def test_no_browseruse_key_prompt_when_declined(self, tmp_path: Path) -> None:
+        """Declining BrowserUse should not prompt for its API key."""
+        data_dir = tmp_path / "data"
+        result = self._run_wizard(
+            tmp_path,
+            # Only 5 prompts: data_dir, url, email, pw, anthropic_key
+            [str(data_dir), "https://example.com", "", "", "sk-ant-test"],
+            # no logins, no browseruse, decline env-vars, no envs
+            confirms=[False, False, False, False],
+        )
+        data = yaml.safe_load(result.read_text())
+        assert data["api_keys"]["browseruse"] == ""
+        assert data["general"]["use_browseruse_llm"] is False

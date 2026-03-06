@@ -69,6 +69,11 @@ class SparkConfig:
     active_environment: str | None = None
     force_unsafe: bool = False
 
+    # API keys
+    anthropic_api_key: str = ""
+    use_browseruse_llm: bool = False
+    browseruse_api_key: str = ""
+
     # Behavior flags
     update_summary: bool = True
     update_tasks: bool = True
