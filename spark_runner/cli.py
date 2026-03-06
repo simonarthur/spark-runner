@@ -288,6 +288,8 @@ def _validate_url(
 @click.option("--model", "model_strs", multiple=True, help="PURPOSE=MODEL_ID override")
 @click.option("--shared-session", is_flag=True, help="Share browser session across tasks")
 @click.option("--parallel", type=int, default=1, help="Parallel execution count")
+@click.option("--env", "env_name", default=None, help="Environment profile name (from config)")
+@click.option("--force-unsafe", is_flag=True, help="Override goal safety checks")
 @click.option("--unrun", is_flag=True, help="Run goals that have never been run")
 @click.option("--failed", is_flag=True, help="Run goals whose last run had errors")
 @click.argument("goal_files", nargs=-1, type=click.Path(), shell_complete=_complete_goal_file)
@@ -306,6 +308,8 @@ def run(
     model_strs: tuple[str, ...],
     shared_session: bool,
     parallel: int,
+    env_name: str | None,
+    force_unsafe: bool,
     unrun: bool,
     failed: bool,
     goal_files: tuple[str, ...],
@@ -315,19 +319,24 @@ def run(
     config_path = _get_config_path(ctx)
     model_overrides = _parse_model_overrides(model_strs) if model_strs else None
 
-    config: SparkConfig = build_config(
-        config_path=Path(config_path) if config_path else None,
-        data_dir=Path(data_dir) if data_dir else None,
-        base_url=base_url,
-        credential_profile=credential_profile,
-        model_overrides=model_overrides,
-        headless=headless,
-        auto_close=auto_close,
-        update_summary=not no_update_summary,
-        update_tasks=not no_update_tasks,
-        knowledge_reuse=not no_knowledge_reuse,
-        regenerate_tasks=regenerate_tasks,
-    )
+    try:
+        config: SparkConfig = build_config(
+            config_path=Path(config_path) if config_path else None,
+            data_dir=Path(data_dir) if data_dir else None,
+            base_url=base_url,
+            credential_profile=credential_profile,
+            model_overrides=model_overrides,
+            headless=headless,
+            auto_close=auto_close,
+            update_summary=not no_update_summary,
+            update_tasks=not no_update_tasks,
+            knowledge_reuse=not no_knowledge_reuse,
+            regenerate_tasks=regenerate_tasks,
+            env=env_name,
+            force_unsafe=force_unsafe,
+        )
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
     config.ensure_dirs()
 
     # Discover goals matching --unrun / --failed filters
@@ -381,9 +390,38 @@ def run(
             credential_profile=credential_profile or "default",
         ))
 
+    # ── Safety gate: check goals before execution ──
+    if config.active_environment is not None:
+        from spark_runner.safety import check_goal_allowed, load_goal_safety
+
+        blocked_names: list[str] = []
+        allowed_tasks: list[TaskSpec] = []
+        for t in tasks:
+            if t.goal_path is not None:
+                safety = load_goal_safety(t.goal_path)
+                allowed, reason = check_goal_allowed(safety, config)
+                if not allowed:
+                    goal_label = t.goal_path.stem
+                    print(
+                        f"BLOCKED: Goal '{goal_label}' cannot run in "
+                        f"environment '{config.active_environment}'."
+                    )
+                    if reason:
+                        print(f"  Reason: {reason}")
+                    blocked_names.append(goal_label)
+                    continue
+            allowed_tasks.append(t)
+        tasks = allowed_tasks
+        if blocked_names and not tasks:
+            raise click.ClickException(
+                f"All goals were blocked in environment '{config.active_environment}'."
+            )
+
     print("=" * 60)
     print("  Spark Runner – Browser Automation")
     print(f"  Target: {config.base_url}")
+    if config.active_environment:
+        print(f"  Environment: {config.active_environment}")
     print("=" * 60)
     print()
 

@@ -9,6 +9,7 @@ import click.testing
 import pytest
 
 from spark_runner.cli import cli, _parse_model_overrides
+from spark_runner.models import EnvironmentProfile
 
 
 @pytest.fixture()
@@ -868,3 +869,202 @@ class TestResultsReportAll:
         assert result.exit_code == 0
         assert mock_gen.call_count == 0
         assert "0 run(s)" in result.output
+
+
+# ── run: --env / --force-unsafe / safety gate ────────────────────────────
+
+
+class TestRunEnvironmentAndSafety:
+    @patch("spark_runner.cli.build_config")
+    @patch("spark_runner.orchestrator.run_single", new_callable=AsyncMock)
+    def test_env_flag_passed_to_config(
+        self,
+        mock_run: AsyncMock,
+        mock_config: MagicMock,
+        runner: click.testing.CliRunner,
+    ) -> None:
+        mock_config.return_value = MagicMock(
+            base_url="https://staging.example.com",
+            active_environment="staging",
+        )
+        result = runner.invoke(cli, ["run", "-p", "test", "--env", "staging"])
+        assert result.exit_code == 0
+        assert mock_config.call_args.kwargs["env"] == "staging"
+
+    @patch("spark_runner.cli.build_config")
+    @patch("spark_runner.orchestrator.run_single", new_callable=AsyncMock)
+    def test_force_unsafe_flag_passed_to_config(
+        self,
+        mock_run: AsyncMock,
+        mock_config: MagicMock,
+        runner: click.testing.CliRunner,
+    ) -> None:
+        mock_config.return_value = MagicMock(
+            base_url="https://x.com",
+            active_environment=None,
+        )
+        result = runner.invoke(cli, ["run", "-p", "test", "--force-unsafe"])
+        assert result.exit_code == 0
+        assert mock_config.call_args.kwargs["force_unsafe"] is True
+
+    @patch("spark_runner.cli.build_config")
+    def test_blocked_goal_prints_error(
+        self,
+        mock_config: MagicMock,
+        runner: click.testing.CliRunner,
+        tmp_path: Path,
+    ) -> None:
+        import json
+
+        goal = tmp_path / "admin-settings-task.json"
+        goal.write_text(json.dumps({
+            "main_task": "Change global settings",
+            "safety": {
+                "blocked_in_production": True,
+                "reason": "Modifies global settings that affect all users",
+            },
+        }))
+        mock_cfg = MagicMock(
+            base_url="https://app.example.com",
+            active_environment="production",
+            force_unsafe=False,
+            goal_summaries_dir=tmp_path,
+            environments={
+                "production": EnvironmentProfile(
+                    name="production", is_production=True,
+                ),
+            },
+        )
+        mock_config.return_value = mock_cfg
+        result = runner.invoke(cli, ["run", str(goal)])
+        assert result.exit_code != 0
+        assert "BLOCKED" in result.output
+        assert "admin-settings-task" in result.output
+        assert "Modifies global settings" in result.output
+
+    @patch("spark_runner.cli.build_config")
+    @patch("spark_runner.orchestrator.run_single", new_callable=AsyncMock)
+    def test_force_unsafe_overrides_blocked_goal(
+        self,
+        mock_run: AsyncMock,
+        mock_config: MagicMock,
+        runner: click.testing.CliRunner,
+        tmp_path: Path,
+    ) -> None:
+        import json
+
+        goal = tmp_path / "admin-settings-task.json"
+        goal.write_text(json.dumps({
+            "main_task": "Change global settings",
+            "safety": {"blocked_in_production": True, "reason": "dangerous"},
+        }))
+        mock_cfg = MagicMock(
+            base_url="https://app.example.com",
+            active_environment="production",
+            force_unsafe=True,
+            goal_summaries_dir=tmp_path,
+            environments={
+                "production": EnvironmentProfile(
+                    name="production", is_production=True,
+                ),
+            },
+        )
+        mock_config.return_value = mock_cfg
+        result = runner.invoke(cli, ["run", str(goal)])
+        assert result.exit_code == 0
+        assert "BLOCKED" not in result.output
+
+    @patch("spark_runner.cli.build_config")
+    @patch("spark_runner.orchestrator.run_single", new_callable=AsyncMock)
+    def test_partial_block_continues_with_allowed(
+        self,
+        mock_run: AsyncMock,
+        mock_config: MagicMock,
+        runner: click.testing.CliRunner,
+        tmp_path: Path,
+    ) -> None:
+        import json
+
+        blocked_goal = tmp_path / "blocked-task.json"
+        blocked_goal.write_text(json.dumps({
+            "main_task": "Blocked",
+            "safety": {"blocked_in_production": True, "reason": "nope"},
+        }))
+        safe_goal = tmp_path / "safe-task.json"
+        safe_goal.write_text(json.dumps({"main_task": "Safe goal"}))
+
+        mock_cfg = MagicMock(
+            base_url="https://app.example.com",
+            active_environment="production",
+            force_unsafe=False,
+            goal_summaries_dir=tmp_path,
+            environments={
+                "production": EnvironmentProfile(
+                    name="production", is_production=True,
+                ),
+            },
+        )
+        mock_config.return_value = mock_cfg
+        result = runner.invoke(cli, ["run", str(blocked_goal), str(safe_goal)])
+        assert result.exit_code == 0
+        assert "BLOCKED" in result.output
+        # The remaining task should still run (only 1 left, so run_single is used)
+        mock_run.assert_called_once()
+
+    @patch("spark_runner.cli.build_config")
+    @patch("spark_runner.orchestrator.run_single", new_callable=AsyncMock)
+    def test_goal_without_safety_runs_in_production(
+        self,
+        mock_run: AsyncMock,
+        mock_config: MagicMock,
+        runner: click.testing.CliRunner,
+        tmp_path: Path,
+    ) -> None:
+        import json
+
+        goal = tmp_path / "normal-task.json"
+        goal.write_text(json.dumps({"main_task": "Normal task, no safety block"}))
+        mock_cfg = MagicMock(
+            base_url="https://app.example.com",
+            active_environment="production",
+            force_unsafe=False,
+            goal_summaries_dir=tmp_path,
+            environments={
+                "production": EnvironmentProfile(
+                    name="production", is_production=True,
+                ),
+            },
+        )
+        mock_config.return_value = mock_cfg
+        result = runner.invoke(cli, ["run", str(goal)])
+        assert result.exit_code == 0
+        assert "BLOCKED" not in result.output
+
+    @patch("spark_runner.cli.build_config")
+    def test_unknown_env_shows_error(
+        self,
+        mock_config: MagicMock,
+        runner: click.testing.CliRunner,
+    ) -> None:
+        mock_config.side_effect = ValueError(
+            "Unknown environment 'bad'. Available: dev, staging"
+        )
+        result = runner.invoke(cli, ["run", "-p", "test", "--env", "bad"])
+        assert result.exit_code != 0
+        assert "Unknown environment" in result.output
+
+    @patch("spark_runner.cli.build_config")
+    @patch("spark_runner.orchestrator.run_single", new_callable=AsyncMock)
+    def test_banner_shows_environment(
+        self,
+        mock_run: AsyncMock,
+        mock_config: MagicMock,
+        runner: click.testing.CliRunner,
+    ) -> None:
+        mock_config.return_value = MagicMock(
+            base_url="https://staging.example.com",
+            active_environment="staging",
+        )
+        result = runner.invoke(cli, ["run", "-p", "test", "--env", "staging"])
+        assert result.exit_code == 0
+        assert "Environment: staging" in result.output
