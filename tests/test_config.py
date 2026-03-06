@@ -439,66 +439,66 @@ class TestRunSetupWizard:
     # run_setup_wizard — it creates directories on disk and will pollute
     # the user's home directory.
     def test_writes_valid_yaml(self, tmp_path: Path) -> None:
-        config_path = tmp_path / "config.yaml"
-        input_values = f"{tmp_path / 'data'}\nhttps://example.com\nme@test.com\nsecret\n"
+        data_dir = tmp_path / "data"
         with patch("click.prompt", side_effect=[
-            str(tmp_path / "data"), "https://example.com", "me@test.com", "secret",
+            str(data_dir), "https://example.com", "me@test.com", "secret",
         ]):
-            run_setup_wizard(config_path)
-        assert config_path.exists()
-        data = yaml.safe_load(config_path.read_text())
-        assert data["general"]["data_dir"] == str(tmp_path / "data")
+            result = run_setup_wizard(tmp_path / "ignored.yaml")
+        # Config is always placed inside the chosen data directory
+        expected = data_dir / "config.yaml"
+        assert result == expected
+        assert expected.exists()
+        data = yaml.safe_load(expected.read_text())
+        assert data["general"]["data_dir"] == str(data_dir)
         assert data["general"]["base_url"] == "https://example.com"
         assert data["credentials"]["default"]["email"] == "me@test.com"
         assert data["credentials"]["default"]["password"] == "secret"
 
     def test_creates_data_directories(self, tmp_path: Path) -> None:
         data_dir = tmp_path / "mydata"
-        config_path = tmp_path / "config.yaml"
         with patch("click.prompt", side_effect=[
             str(data_dir), "https://example.com", "", "",
         ]):
-            run_setup_wizard(config_path)
+            run_setup_wizard(tmp_path / "ignored.yaml")
         assert (data_dir / "tasks").is_dir()
         assert (data_dir / "goal_summaries").is_dir()
         assert (data_dir / "runs").is_dir()
 
     def test_sets_permissions_when_credentials_provided(self, tmp_path: Path) -> None:
-        config_path = tmp_path / "config.yaml"
+        data_dir = tmp_path / "data"
         with patch("click.prompt", side_effect=[
-            str(tmp_path / "data"), "https://example.com", "user@test.com", "pw",
+            str(data_dir), "https://example.com", "user@test.com", "pw",
         ]):
-            run_setup_wizard(config_path)
-        mode = config_path.stat().st_mode & 0o777
+            result = run_setup_wizard(tmp_path / "ignored.yaml")
+        mode = result.stat().st_mode & 0o777
         assert mode == 0o600
 
     def test_skips_permissions_when_no_credentials(self, tmp_path: Path) -> None:
-        config_path = tmp_path / "config.yaml"
+        data_dir = tmp_path / "data"
         with patch("click.prompt", side_effect=[
-            str(tmp_path / "data"), "https://example.com", "", "",
+            str(data_dir), "https://example.com", "", "",
         ]):
-            run_setup_wizard(config_path)
-        mode = config_path.stat().st_mode & 0o777
+            result = run_setup_wizard(tmp_path / "ignored.yaml")
+        mode = result.stat().st_mode & 0o777
         # Should NOT be 0600 — default permissions preserved
         assert mode != 0o600
 
     def test_uses_defaults_when_accepted(self, tmp_path: Path) -> None:
         # NOTE: Never use ~/spark_runner here — tests must use tmp_path to
         # avoid creating real directories in the user's home.
-        config_path = tmp_path / "config.yaml"
         default_dir = str(tmp_path / "spark_runner")
         with patch("click.prompt", side_effect=[
             default_dir, "https://sparky-web-dev.vercel.app", "", "",
         ]):
-            run_setup_wizard(config_path)
-        data = yaml.safe_load(config_path.read_text())
+            result = run_setup_wizard(tmp_path / "ignored.yaml")
+        data = yaml.safe_load(result.read_text())
         assert data["general"]["data_dir"] == default_dir
         assert data["general"]["base_url"] == "https://sparky-web-dev.vercel.app"
 
-    def test_returns_config_path(self, tmp_path: Path) -> None:
-        config_path = tmp_path / "config.yaml"
+    def test_returns_config_inside_data_dir(self, tmp_path: Path) -> None:
+        data_dir = tmp_path / "data"
         with patch("click.prompt", side_effect=[
-            str(tmp_path / "data"), "https://example.com", "", "",
+            str(data_dir), "https://example.com", "", "",
         ]):
-            result = run_setup_wizard(config_path)
-        assert result == config_path
+            result = run_setup_wizard(tmp_path / "ignored.yaml")
+        assert result == data_dir / "config.yaml"

@@ -165,7 +165,8 @@ def run_setup_wizard(config_path: Path) -> Path:
     for subdir in ("tasks", "goal_summaries", "runs"):
         (resolved_data_dir / subdir).mkdir(parents=True, exist_ok=True)
 
-    # Write config file
+    # Place config.yaml inside the chosen data directory
+    config_path = resolved_data_dir / "config.yaml"
     config_path.parent.mkdir(parents=True, exist_ok=True)
     config_content = _CONFIG_TEMPLATE.format(
         data_dir=data_dir,
