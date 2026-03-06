@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +15,21 @@ from spark_runner.models import CredentialProfile, EnvironmentProfile, ModelConf
 def _resolve_path(p: str | Path) -> Path:
     """Expand ``~`` and return an absolute Path."""
     return Path(p).expanduser().resolve()
+
+
+def _resolve_value(value: str) -> str:
+    """Resolve environment variable references in a string value.
+
+    Supports ``$VAR`` and ``${VAR}`` syntax. Returns the original string
+    if no env var pattern is found or the variable is not set.
+    """
+    if not isinstance(value, str):
+        return value
+    match = re.fullmatch(r"\$\{([^}]+)\}|\$([A-Za-z_][A-Za-z0-9_]*)", value.strip())
+    if match:
+        var_name = match.group(1) or match.group(2)
+        return os.environ.get(var_name, value)
+    return value
 
 
 def load_config_from_yaml(path: Path) -> dict[str, Any]:
@@ -43,10 +59,10 @@ def _parse_credentials(raw: dict[str, Any]) -> dict[str, CredentialProfile]:
     for name, profile_data in raw.items():
         if isinstance(profile_data, dict):
             result[name] = CredentialProfile(
-                email=profile_data.get("email", ""),
-                password=profile_data.get("password", ""),
+                email=_resolve_value(profile_data.get("email", "")),
+                password=_resolve_value(profile_data.get("password", "")),
                 extra={
-                    k: v
+                    k: _resolve_value(v) if isinstance(v, str) else v
                     for k, v in profile_data.items()
                     if k not in ("email", "password")
                 },
@@ -107,6 +123,12 @@ def resolve_config_path(
     return default_data_dir / "config.yaml"
 
 
+def _env_var_name(*parts: str) -> str:
+    """Build a ``SPARK_RUNNER_…`` environment variable name from parts."""
+    suffix = "_".join(p.upper() for p in parts)
+    return f"SPARK_RUNNER_{suffix}"
+
+
 def _build_config_yaml(
     data_dir: str,
     base_url: str,
@@ -114,8 +136,16 @@ def _build_config_yaml(
     password: str,
     extra_credentials: list[dict[str, str]],
     environments: list[dict[str, str]],
+    use_env_vars: bool = False,
 ) -> str:
     """Build the config.yaml content string with optional environments."""
+
+    def _cred_value(value: str, env_var: str) -> str:
+        """Return an env-var reference or a quoted literal."""
+        if use_env_vars and value:
+            return f"${env_var}"
+        return f'"{value}"'
+
     lines: list[str] = [
         "general:",
         f"  data_dir: {data_dir}",
@@ -123,28 +153,38 @@ def _build_config_yaml(
         "",
         "credentials:",
         "  default:",
-        f'    email: "{email}"',
-        f'    password: "{password}"',
+        f'    email: {_cred_value(email, _env_var_name("DEFAULT", "EMAIL"))}',
+        f'    password: {_cred_value(password, _env_var_name("DEFAULT", "PASSWORD"))}',
     ]
 
     for cred in extra_credentials:
-        lines.append(f"  {cred['name']}:")
-        lines.append(f'    email: "{cred.get("email", "")}"')
-        lines.append(f'    password: "{cred.get("password", "")}"')
+        cname = cred["name"]
+        lines.append(f"  {cname}:")
+        lines.append(
+            f'    email: {_cred_value(cred.get("email", ""), _env_var_name(cname, "EMAIL"))}'
+        )
+        lines.append(
+            f'    password: {_cred_value(cred.get("password", ""), _env_var_name(cname, "PASSWORD"))}'
+        )
 
     if environments:
         lines.append("")
         lines.append("environments:")
         for env in environments:
-            lines.append(f"  {env['name']}:")
+            ename = env["name"]
+            lines.append(f"  {ename}:")
             lines.append(f"    base_url: {env['base_url']}")
             if env.get("is_production"):
                 lines.append("    is_production: true")
             if env.get("email") or env.get("password"):
                 lines.append("    credentials:")
                 lines.append("      default:")
-                lines.append(f'        email: "{env.get("email", "")}"')
-                lines.append(f'        password: "{env.get("password", "")}"')
+                lines.append(
+                    f'        email: {_cred_value(env.get("email", ""), _env_var_name(ename, "DEFAULT", "EMAIL"))}'
+                )
+                lines.append(
+                    f'        password: {_cred_value(env.get("password", ""), _env_var_name(ename, "DEFAULT", "PASSWORD"))}'
+                )
     else:
         lines.extend([
             "",
@@ -231,6 +271,15 @@ def run_setup_wizard(config_path: Path) -> Path:
             if not click.confirm("\n  Add another login?", default=False):
                 break
 
+    # Offer env-var storage when any password was provided
+    any_password = bool(password) or any(c.get("password") for c in extra_credentials)
+    use_env_vars = False
+    if any_password:
+        use_env_vars = click.confirm(
+            "\nStore credentials as environment variable references instead of plaintext?",
+            default=True,
+        )
+
     # Optional multi-environment setup
     environments: list[dict[str, str]] = []
     if click.confirm(
@@ -259,23 +308,49 @@ def run_setup_wizard(config_path: Path) -> Path:
         password=password,
         extra_credentials=extra_credentials,
         environments=environments,
+        use_env_vars=use_env_vars,
     )
     config_path.write_text(config_content)
 
-    # Restrict permissions when credentials are present
-    has_credentials = bool(email or password)
-    if not has_credentials:
-        has_credentials = any(
-            c.get("email") or c.get("password") for c in extra_credentials
-        )
-    if not has_credentials:
-        has_credentials = any(
-            env.get("email") or env.get("password") for env in environments
-        )
-    if has_credentials:
+    # Restrict permissions when plaintext credentials are present
+    has_plaintext_credentials = False
+    if not use_env_vars:
+        has_plaintext_credentials = bool(email or password)
+        if not has_plaintext_credentials:
+            has_plaintext_credentials = any(
+                c.get("email") or c.get("password") for c in extra_credentials
+            )
+        if not has_plaintext_credentials:
+            has_plaintext_credentials = any(
+                env.get("email") or env.get("password") for env in environments
+            )
+    if has_plaintext_credentials:
         set_config_file_permissions(config_path)
 
     click.echo(f"\nConfig written to {config_path}")
+
+    # Print export hints when using env-var mode
+    if use_env_vars:
+        click.echo(
+            "\nAdd these exports to your shell profile "
+            "(e.g. ~/.bashrc, ~/.zshrc, or .env):"
+        )
+        if email:
+            click.echo(f'  export {_env_var_name("DEFAULT", "EMAIL")}="{email}"')
+        if password:
+            click.echo(f'  export {_env_var_name("DEFAULT", "PASSWORD")}="{password}"')
+        for cred in extra_credentials:
+            cname = cred["name"]
+            if cred.get("email"):
+                click.echo(f'  export {_env_var_name(cname, "EMAIL")}="{cred["email"]}"')
+            if cred.get("password"):
+                click.echo(f'  export {_env_var_name(cname, "PASSWORD")}="{cred["password"]}"')
+        for env in environments:
+            ename = env["name"]
+            if env.get("email"):
+                click.echo(f'  export {_env_var_name(ename, "DEFAULT", "EMAIL")}="{env["email"]}"')
+            if env.get("password"):
+                click.echo(f'  export {_env_var_name(ename, "DEFAULT", "PASSWORD")}="{env["password"]}"')
 
     # If the user chose a non-default data directory, remind them to set the
     # environment variable so spark-runner can find the config.

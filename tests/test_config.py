@@ -15,7 +15,9 @@ from spark_runner.config import (
     load_config_from_yaml,
     resolve_config_path,
     run_setup_wizard,
+    _parse_credentials,
     _parse_environments,
+    _resolve_value,
 )
 from spark_runner.models import EnvironmentProfile, SparkConfig
 
@@ -447,9 +449,11 @@ class TestRunSetupWizard:
         ``confirms`` maps to the click.confirm calls in order:
         - [0] = "set up additional logins?"
         - ... (if yes: "add another login?" after each)
+        - [?] = "store as env var references?" (only when a password was given)
         - [N] = "set up more environments?"
         - ... (if yes: "is production?", "add another environment?" after each)
-        Defaults to [False, False] (decline both additional logins and envs).
+        Defaults to [False, False] (decline both additional logins and envs —
+        only valid when no password is provided).
         """
         if confirms is None:
             confirms = [False, False]
@@ -459,9 +463,12 @@ class TestRunSetupWizard:
 
     def test_writes_valid_yaml(self, tmp_path: Path) -> None:
         data_dir = tmp_path / "data"
-        result = self._run_wizard(tmp_path, [
-            str(data_dir), "https://example.com", "me@test.com", "secret",
-        ])
+        result = self._run_wizard(
+            tmp_path,
+            [str(data_dir), "https://example.com", "me@test.com", "secret"],
+            # no logins, decline env-vars, no envs
+            confirms=[False, False, False],
+        )
         expected = data_dir / "config.yaml"
         assert result == expected
         assert expected.exists()
@@ -482,9 +489,12 @@ class TestRunSetupWizard:
 
     def test_sets_permissions_when_credentials_provided(self, tmp_path: Path) -> None:
         data_dir = tmp_path / "data"
-        result = self._run_wizard(tmp_path, [
-            str(data_dir), "https://example.com", "user@test.com", "pw",
-        ])
+        result = self._run_wizard(
+            tmp_path,
+            [str(data_dir), "https://example.com", "user@test.com", "pw"],
+            # no logins, decline env-vars, no envs
+            confirms=[False, False, False],
+        )
         mode = result.stat().st_mode & 0o777
         assert mode == 0o600
 
@@ -612,8 +622,8 @@ class TestRunSetupWizard:
                 str(data_dir), "https://example.com", "default@test.com", "defpw",
                 "admin", "admin@test.com", "adminpw",
             ],
-            # yes logins, no add another login, no envs
-            confirms=[True, False, False],
+            # yes logins, no add another, decline env-vars, no envs
+            confirms=[True, False, False, False],
         )
         data = yaml.safe_load(result.read_text())
         assert "admin" in data["credentials"]
@@ -630,8 +640,8 @@ class TestRunSetupWizard:
                 "admin", "admin@test.com", "adminpw",
                 "viewer", "viewer@test.com", "viewpw",
             ],
-            # yes logins, yes add another, no add another, no envs
-            confirms=[True, True, False, False],
+            # yes logins, yes add another, no add another, decline env-vars, no envs
+            confirms=[True, True, False, False, False],
         )
         data = yaml.safe_load(result.read_text())
         assert "admin" in data["credentials"]
@@ -645,8 +655,172 @@ class TestRunSetupWizard:
                 str(data_dir), "https://example.com", "", "",
                 "admin", "admin@test.com", "pw",
             ],
-            # yes logins, no add another, no envs
-            confirms=[True, False, False],
+            # yes logins, no add another, decline env-vars, no envs
+            confirms=[True, False, False, False],
         )
         mode = result.stat().st_mode & 0o777
         assert mode == 0o600
+
+
+# ── _resolve_value ───────────────────────────────────────────────────────
+
+
+class TestResolveValue:
+    def test_plain_string_unchanged(self) -> None:
+        assert _resolve_value("hello") == "hello"
+
+    def test_dollar_syntax(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("MY_VAR", "resolved")
+        assert _resolve_value("$MY_VAR") == "resolved"
+
+    def test_braced_syntax(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("MY_VAR", "resolved")
+        assert _resolve_value("${MY_VAR}") == "resolved"
+
+    def test_unset_var_returns_original(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("NONEXISTENT_VAR", raising=False)
+        assert _resolve_value("$NONEXISTENT_VAR") == "$NONEXISTENT_VAR"
+
+    def test_non_string_passes_through(self) -> None:
+        assert _resolve_value(42) == 42  # type: ignore[arg-type]
+
+    def test_embedded_dollar_not_resolved(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("FOO", "bar")
+        assert _resolve_value("prefix$FOO") == "prefix$FOO"
+
+    def test_whitespace_stripped(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("MY_VAR", "resolved")
+        assert _resolve_value("  $MY_VAR  ") == "resolved"
+
+
+# ── _parse_credentials with env vars ─────────────────────────────────────
+
+
+class TestParseCredentialsEnvVars:
+    def test_resolves_env_vars(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("TEST_EMAIL", "env@example.com")
+        monkeypatch.setenv("TEST_PASSWORD", "envpass")
+        raw: dict[str, Any] = {
+            "default": {
+                "email": "$TEST_EMAIL",
+                "password": "${TEST_PASSWORD}",
+            },
+        }
+        result = _parse_credentials(raw)
+        assert result["default"].email == "env@example.com"
+        assert result["default"].password == "envpass"
+
+    def test_unset_env_var_keeps_reference(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("MISSING_VAR", raising=False)
+        raw: dict[str, Any] = {
+            "default": {
+                "email": "$MISSING_VAR",
+                "password": "literal",
+            },
+        }
+        result = _parse_credentials(raw)
+        assert result["default"].email == "$MISSING_VAR"
+        assert result["default"].password == "literal"
+
+    def test_extra_fields_resolved(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("MY_API_KEY", "secret123")
+        raw: dict[str, Any] = {
+            "default": {
+                "email": "user@example.com",
+                "password": "pw",
+                "api_key": "$MY_API_KEY",
+            },
+        }
+        result = _parse_credentials(raw)
+        assert result["default"].extra["api_key"] == "secret123"
+
+
+# ── Wizard env-var mode ──────────────────────────────────────────────────
+
+
+class TestWizardEnvVarMode:
+    def _run_wizard(
+        self, tmp_path: Path, prompts: list[str],
+        confirms: list[bool],
+    ) -> Path:
+        with patch("click.prompt", side_effect=prompts), \
+             patch("click.confirm", side_effect=confirms):
+            return run_setup_wizard(tmp_path / "ignored.yaml")
+
+    def test_env_var_mode_writes_references(self, tmp_path: Path) -> None:
+        data_dir = tmp_path / "data"
+        result = self._run_wizard(
+            tmp_path,
+            [str(data_dir), "https://example.com", "me@test.com", "secret"],
+            # no logins, accept env-vars, no envs
+            confirms=[False, True, False],
+        )
+        data = yaml.safe_load(result.read_text())
+        assert data["credentials"]["default"]["email"] == "$SPARK_RUNNER_DEFAULT_EMAIL"
+        assert data["credentials"]["default"]["password"] == "$SPARK_RUNNER_DEFAULT_PASSWORD"
+
+    def test_env_var_mode_shows_export_hints(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        data_dir = tmp_path / "data"
+        self._run_wizard(
+            tmp_path,
+            [str(data_dir), "https://example.com", "me@test.com", "secret"],
+            # no logins, accept env-vars, no envs
+            confirms=[False, True, False],
+        )
+        output = capsys.readouterr().out
+        assert 'export SPARK_RUNNER_DEFAULT_PASSWORD="secret"' in output
+        assert 'export SPARK_RUNNER_DEFAULT_EMAIL="me@test.com"' in output
+
+    def test_env_var_mode_skips_permissions(self, tmp_path: Path) -> None:
+        data_dir = tmp_path / "data"
+        result = self._run_wizard(
+            tmp_path,
+            [str(data_dir), "https://example.com", "me@test.com", "secret"],
+            # no logins, accept env-vars, no envs
+            confirms=[False, True, False],
+        )
+        mode = result.stat().st_mode & 0o777
+        assert mode != 0o600
+
+    def test_plaintext_mode_unchanged(self, tmp_path: Path) -> None:
+        data_dir = tmp_path / "data"
+        result = self._run_wizard(
+            tmp_path,
+            [str(data_dir), "https://example.com", "me@test.com", "secret"],
+            # no logins, decline env-vars, no envs
+            confirms=[False, False, False],
+        )
+        data = yaml.safe_load(result.read_text())
+        assert data["credentials"]["default"]["password"] == "secret"
+
+    def test_env_var_mode_extra_credentials(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        data_dir = tmp_path / "data"
+        result = self._run_wizard(
+            tmp_path,
+            [
+                str(data_dir), "https://example.com", "me@test.com", "secret",
+                "admin", "admin@test.com", "adminpw",
+            ],
+            # yes logins, no add another, accept env-vars, no envs
+            confirms=[True, False, True, False],
+        )
+        data = yaml.safe_load(result.read_text())
+        assert data["credentials"]["admin"]["password"] == "$SPARK_RUNNER_ADMIN_PASSWORD"
+        output = capsys.readouterr().out
+        assert 'export SPARK_RUNNER_ADMIN_PASSWORD="adminpw"' in output
+
+    def test_no_password_skips_env_var_prompt(self, tmp_path: Path) -> None:
+        """When no password is provided, the env-var prompt is not shown."""
+        data_dir = tmp_path / "data"
+        result = self._run_wizard(
+            tmp_path,
+            [str(data_dir), "https://example.com", "me@test.com", ""],
+            # no logins (no password → no env-var prompt), no envs
+            confirms=[False, False],
+        )
+        data = yaml.safe_load(result.read_text())
+        assert data["credentials"]["default"]["email"] == "me@test.com"
