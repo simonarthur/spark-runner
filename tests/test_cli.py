@@ -221,14 +221,24 @@ class TestRunURLValidation:
 
 
 class TestRunGoalFileValidation:
-    def test_nonexistent_goal_file(self, runner: click.testing.CliRunner) -> None:
+    @patch("spark_runner.cli.build_config")
+    def test_nonexistent_goal_file(
+        self, mock_config: MagicMock, runner: click.testing.CliRunner,
+    ) -> None:
+        mock_config.return_value = MagicMock(
+            base_url="https://x.com", goal_summaries_dir=None, active_environment=None,
+        )
         result = runner.invoke(cli, ["run", "/no/such/file.json"])
         assert result.exit_code != 0
         assert "Goal file not found" in result.output
 
+    @patch("spark_runner.cli.build_config")
     def test_nonexistent_goal_file_with_prompt(
-        self, runner: click.testing.CliRunner
+        self, mock_config: MagicMock, runner: click.testing.CliRunner,
     ) -> None:
+        mock_config.return_value = MagicMock(
+            base_url="https://x.com", goal_summaries_dir=None, active_environment=None,
+        )
         result = runner.invoke(
             cli, ["run", "-p", "test", "/no/such/goal.json"]
         )
