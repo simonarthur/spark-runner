@@ -6,6 +6,8 @@ import os
 from pathlib import Path
 from typing import Any
 
+import click
+
 from spark_runner.models import CredentialProfile, EnvironmentProfile, ModelConfig, SparkConfig
 
 
@@ -81,6 +83,104 @@ def _parse_environments(raw: dict[str, Any]) -> dict[str, EnvironmentProfile]:
                 credentials=creds,
             )
     return result
+
+
+def resolve_config_path(
+    config_path: Path | None = None,
+    data_dir: Path | None = None,
+) -> Path:
+    """Determine the expected config file path without loading it.
+
+    Uses the same resolution logic as ``build_config()`` so that callers can
+    check for the file's existence before building the full config.
+    """
+    if config_path is not None:
+        return _resolve_path(config_path)
+
+    env_config = os.environ.get("SPARK_RUNNER_CONFIG")
+    if env_config:
+        return _resolve_path(env_config)
+
+    default_data_dir = _resolve_path(
+        data_dir or os.environ.get("SPARK_RUNNER_DATA_DIR", "~/spark_runner")
+    )
+    return default_data_dir / "config.yaml"
+
+
+_CONFIG_TEMPLATE = """\
+general:
+  data_dir: {data_dir}
+  base_url: {base_url}
+
+credentials:
+  default:
+    email: "{email}"
+    password: "{password}"
+
+# Uncomment and configure environments for multi-environment support:
+# environments:
+#   staging:
+#     base_url: https://staging.example.com
+#     credentials:
+#       default:
+#         email: staging@example.com
+#         password: stagingpass
+#   production:
+#     base_url: https://app.example.com
+#     is_production: true
+#     credentials:
+#       default:
+#         email: prod@example.com
+#         password: prodpass
+"""
+
+
+def run_setup_wizard(config_path: Path) -> Path:
+    """Interactively prompt for essential settings and write ``config.yaml``.
+
+    Creates the data directory (and standard subdirectories) if needed, writes
+    the config file, and restricts its permissions when credentials are provided.
+
+    Returns the path to the newly created config file.
+    """
+    click.echo("Spark Runner – First-time setup\n")
+
+    data_dir = click.prompt(
+        "Data directory",
+        default="~/spark_runner",
+        type=str,
+    )
+    base_url = click.prompt(
+        "Base URL",
+        default="https://sparky-web-dev.vercel.app",
+        type=str,
+    )
+    email = click.prompt("Default email", default="", type=str)
+    password = click.prompt(
+        "Default password", default="", hide_input=True, type=str,
+    )
+
+    # Create data directory and subdirectories
+    resolved_data_dir = _resolve_path(data_dir)
+    for subdir in ("tasks", "goal_summaries", "runs"):
+        (resolved_data_dir / subdir).mkdir(parents=True, exist_ok=True)
+
+    # Write config file
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_content = _CONFIG_TEMPLATE.format(
+        data_dir=data_dir,
+        base_url=base_url,
+        email=email,
+        password=password,
+    )
+    config_path.write_text(config_content)
+
+    # Restrict permissions when credentials are present
+    if email or password:
+        set_config_file_permissions(config_path)
+
+    click.echo(f"\nConfig written to {config_path}")
+    return config_path
 
 
 def build_config(

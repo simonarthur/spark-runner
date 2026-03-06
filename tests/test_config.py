@@ -2,13 +2,21 @@
 
 from __future__ import annotations
 
+import stat
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
 import pytest
+import yaml
 
-from spark_runner.config import build_config, load_config_from_yaml, _parse_environments
+from spark_runner.config import (
+    build_config,
+    load_config_from_yaml,
+    resolve_config_path,
+    run_setup_wizard,
+    _parse_environments,
+)
 from spark_runner.models import EnvironmentProfile, SparkConfig
 
 
@@ -391,3 +399,99 @@ class TestBuildConfigEnvironments:
         config = build_config(config_path=config_file, data_dir=tmp_path)
         assert config.environments == {}
         assert config.active_environment is None
+
+
+# ── resolve_config_path ──────────────────────────────────────────────────
+
+
+class TestResolveConfigPath:
+    def test_explicit_path_returned(self, tmp_path: Path) -> None:
+        p = tmp_path / "my_config.yaml"
+        result = resolve_config_path(config_path=p)
+        assert result == p.resolve()
+
+    def test_env_var_overrides_default(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("SPARK_RUNNER_CONFIG", str(tmp_path / "env.yaml"))
+        result = resolve_config_path()
+        assert result == (tmp_path / "env.yaml").resolve()
+
+    def test_default_uses_data_dir(self, tmp_path: Path) -> None:
+        result = resolve_config_path(data_dir=tmp_path)
+        assert result == tmp_path / "config.yaml"
+
+    def test_default_uses_home_spark_runner(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.delenv("SPARK_RUNNER_CONFIG", raising=False)
+        monkeypatch.delenv("SPARK_RUNNER_DATA_DIR", raising=False)
+        result = resolve_config_path()
+        assert result == Path("~/spark_runner").expanduser().resolve() / "config.yaml"
+
+
+# ── run_setup_wizard ─────────────────────────────────────────────────────
+
+
+class TestRunSetupWizard:
+    def test_writes_valid_yaml(self, tmp_path: Path) -> None:
+        config_path = tmp_path / "config.yaml"
+        input_values = f"{tmp_path / 'data'}\nhttps://example.com\nme@test.com\nsecret\n"
+        with patch("click.prompt", side_effect=[
+            str(tmp_path / "data"), "https://example.com", "me@test.com", "secret",
+        ]):
+            run_setup_wizard(config_path)
+        assert config_path.exists()
+        data = yaml.safe_load(config_path.read_text())
+        assert data["general"]["data_dir"] == str(tmp_path / "data")
+        assert data["general"]["base_url"] == "https://example.com"
+        assert data["credentials"]["default"]["email"] == "me@test.com"
+        assert data["credentials"]["default"]["password"] == "secret"
+
+    def test_creates_data_directories(self, tmp_path: Path) -> None:
+        data_dir = tmp_path / "mydata"
+        config_path = tmp_path / "config.yaml"
+        with patch("click.prompt", side_effect=[
+            str(data_dir), "https://example.com", "", "",
+        ]):
+            run_setup_wizard(config_path)
+        assert (data_dir / "tasks").is_dir()
+        assert (data_dir / "goal_summaries").is_dir()
+        assert (data_dir / "runs").is_dir()
+
+    def test_sets_permissions_when_credentials_provided(self, tmp_path: Path) -> None:
+        config_path = tmp_path / "config.yaml"
+        with patch("click.prompt", side_effect=[
+            str(tmp_path / "data"), "https://example.com", "user@test.com", "pw",
+        ]):
+            run_setup_wizard(config_path)
+        mode = config_path.stat().st_mode & 0o777
+        assert mode == 0o600
+
+    def test_skips_permissions_when_no_credentials(self, tmp_path: Path) -> None:
+        config_path = tmp_path / "config.yaml"
+        with patch("click.prompt", side_effect=[
+            str(tmp_path / "data"), "https://example.com", "", "",
+        ]):
+            run_setup_wizard(config_path)
+        mode = config_path.stat().st_mode & 0o777
+        # Should NOT be 0600 — default permissions preserved
+        assert mode != 0o600
+
+    def test_uses_defaults_when_accepted(self, tmp_path: Path) -> None:
+        config_path = tmp_path / "config.yaml"
+        with patch("click.prompt", side_effect=[
+            "~/spark_runner", "https://sparky-web-dev.vercel.app", "", "",
+        ]):
+            run_setup_wizard(config_path)
+        data = yaml.safe_load(config_path.read_text())
+        assert data["general"]["data_dir"] == "~/spark_runner"
+        assert data["general"]["base_url"] == "https://sparky-web-dev.vercel.app"
+
+    def test_returns_config_path(self, tmp_path: Path) -> None:
+        config_path = tmp_path / "config.yaml"
+        with patch("click.prompt", side_effect=[
+            str(tmp_path / "data"), "https://example.com", "", "",
+        ]):
+            result = run_setup_wizard(config_path)
+        assert result == config_path

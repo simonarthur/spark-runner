@@ -1078,3 +1078,120 @@ class TestRunEnvironmentAndSafety:
         result = runner.invoke(cli, ["run", "-p", "test", "--env", "staging"])
         assert result.exit_code == 0
         assert "Environment: staging" in result.output
+
+
+# ── init subcommand ──────────────────────────────────────────────────────
+
+
+class TestInitSubcommand:
+    def test_init_creates_config(
+        self, runner: click.testing.CliRunner, tmp_path: Path,
+    ) -> None:
+        config_path = tmp_path / "config.yaml"
+        with patch("spark_runner.cli.resolve_config_path", return_value=config_path), \
+             patch("spark_runner.cli.run_setup_wizard", return_value=config_path) as mock_wiz:
+            result = runner.invoke(cli, ["init"])
+        assert result.exit_code == 0
+        mock_wiz.assert_called_once_with(config_path)
+
+    def test_init_asks_before_overwriting(
+        self, runner: click.testing.CliRunner, tmp_path: Path,
+    ) -> None:
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text("existing: true\n")
+        with patch("spark_runner.cli.resolve_config_path", return_value=config_path), \
+             patch("spark_runner.cli.run_setup_wizard") as mock_wiz:
+            # User declines overwrite
+            result = runner.invoke(cli, ["init"], input="n\n")
+        assert result.exit_code == 0
+        assert "Aborted" in result.output
+        mock_wiz.assert_not_called()
+
+    def test_init_overwrites_when_confirmed(
+        self, runner: click.testing.CliRunner, tmp_path: Path,
+    ) -> None:
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text("existing: true\n")
+        with patch("spark_runner.cli.resolve_config_path", return_value=config_path), \
+             patch("spark_runner.cli.run_setup_wizard", return_value=config_path) as mock_wiz:
+            result = runner.invoke(cli, ["init"], input="y\n")
+        assert result.exit_code == 0
+        mock_wiz.assert_called_once_with(config_path)
+
+    def test_init_force_overwrites_without_asking(
+        self, runner: click.testing.CliRunner, tmp_path: Path,
+    ) -> None:
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text("existing: true\n")
+        with patch("spark_runner.cli.resolve_config_path", return_value=config_path), \
+             patch("spark_runner.cli.run_setup_wizard", return_value=config_path) as mock_wiz:
+            result = runner.invoke(cli, ["init", "--force"])
+        assert result.exit_code == 0
+        mock_wiz.assert_called_once_with(config_path)
+        assert "Overwrite" not in result.output
+
+    def test_init_shown_in_help(self, runner: click.testing.CliRunner) -> None:
+        result = runner.invoke(cli, ["--help"])
+        assert "init" in result.output
+
+
+# ── run: first-run auto-detection ────────────────────────────────────────
+
+
+class TestRunFirstRunDetection:
+    @patch("spark_runner.cli.build_config")
+    @patch("spark_runner.orchestrator.run_single", new_callable=AsyncMock)
+    def test_run_triggers_wizard_when_config_missing_tty(
+        self,
+        mock_run: AsyncMock,
+        mock_config: MagicMock,
+        runner: click.testing.CliRunner,
+        tmp_path: Path,
+    ) -> None:
+        config_path = tmp_path / "no_such_config.yaml"
+        mock_config.return_value = MagicMock(base_url="https://x.com")
+        with patch("spark_runner.cli.resolve_config_path", return_value=config_path), \
+             patch("spark_runner.cli.run_setup_wizard") as mock_wiz, \
+             patch("spark_runner.cli._is_interactive", return_value=True):
+            result = runner.invoke(cli, ["run", "-p", "test"])
+        assert result.exit_code == 0
+        assert "No config found" in result.output
+        mock_wiz.assert_called_once_with(config_path)
+
+    @patch("spark_runner.cli.build_config")
+    @patch("spark_runner.orchestrator.run_single", new_callable=AsyncMock)
+    def test_run_prints_hint_when_config_missing_non_tty(
+        self,
+        mock_run: AsyncMock,
+        mock_config: MagicMock,
+        runner: click.testing.CliRunner,
+        tmp_path: Path,
+    ) -> None:
+        config_path = tmp_path / "no_such_config.yaml"
+        mock_config.return_value = MagicMock(base_url="https://x.com")
+        with patch("spark_runner.cli.resolve_config_path", return_value=config_path), \
+             patch("spark_runner.cli.run_setup_wizard") as mock_wiz, \
+             patch("spark_runner.cli._is_interactive", return_value=False):
+            result = runner.invoke(cli, ["run", "-p", "test"])
+        assert result.exit_code == 0
+        assert "spark-runner init" in result.output
+        mock_wiz.assert_not_called()
+
+    @patch("spark_runner.cli.build_config")
+    @patch("spark_runner.orchestrator.run_single", new_callable=AsyncMock)
+    def test_run_skips_wizard_when_config_exists(
+        self,
+        mock_run: AsyncMock,
+        mock_config: MagicMock,
+        runner: click.testing.CliRunner,
+        tmp_path: Path,
+    ) -> None:
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text("general:\n  base_url: https://example.com\n")
+        mock_config.return_value = MagicMock(base_url="https://example.com")
+        with patch("spark_runner.cli.resolve_config_path", return_value=config_path), \
+             patch("spark_runner.cli.run_setup_wizard") as mock_wiz:
+            result = runner.invoke(cli, ["run", "-p", "test"])
+        assert result.exit_code == 0
+        assert "No config found" not in result.output
+        mock_wiz.assert_not_called()

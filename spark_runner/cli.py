@@ -11,8 +11,13 @@ from typing import Any
 import click
 from click.shell_completion import CompletionItem
 
-from spark_runner.config import build_config
+from spark_runner.config import build_config, resolve_config_path, run_setup_wizard
 from spark_runner.models import SparkConfig, TaskSpec
+
+
+def _is_interactive() -> bool:
+    """Return True when stdin is attached to a terminal."""
+    return sys.stdin.isatty()
 
 
 def _parse_model_overrides(values: tuple[str, ...]) -> dict[str, str]:
@@ -261,6 +266,28 @@ def cli(ctx: click.Context, data_dir: str | None, config_path: str | None) -> No
         click.echo(ctx.get_help())
 
 
+@cli.command()
+@click.option("--force", is_flag=True, help="Overwrite existing config without asking")
+@click.pass_context
+def init(ctx: click.Context, force: bool) -> None:
+    """Set up Spark Runner configuration interactively."""
+    data_dir = _get_data_dir(ctx)
+    config_path_str = _get_config_path(ctx)
+    config_path = resolve_config_path(
+        config_path=Path(config_path_str) if config_path_str else None,
+        data_dir=Path(data_dir) if data_dir else None,
+    )
+
+    if config_path.exists() and not force:
+        if not click.confirm(
+            f"Config already exists at {config_path}. Overwrite?"
+        ):
+            click.echo("Aborted.")
+            return
+
+    run_setup_wizard(config_path)
+
+
 def _validate_url(
     ctx: click.Context, param: click.Parameter, value: str | None,
 ) -> str | None:
@@ -318,6 +345,22 @@ def run(
     data_dir = _get_data_dir(ctx)
     config_path = _get_config_path(ctx)
     model_overrides = _parse_model_overrides(model_strs) if model_strs else None
+
+    # First-run detection: offer setup wizard if config doesn't exist
+    resolved_cfg = resolve_config_path(
+        config_path=Path(config_path) if config_path else None,
+        data_dir=Path(data_dir) if data_dir else None,
+    )
+    if not resolved_cfg.exists():
+        if _is_interactive():
+            click.echo("No config found. Running first-time setup...\n")
+            run_setup_wizard(resolved_cfg)
+            click.echo()
+        else:
+            click.echo(
+                "No config found. Run 'spark-runner init' to set up, "
+                "or continuing with defaults."
+            )
 
     try:
         config: SparkConfig = build_config(
