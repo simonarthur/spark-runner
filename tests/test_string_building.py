@@ -54,3 +54,28 @@ class TestBuildAugmentedTask:
     def test_none_observations_not_included(self) -> None:
         result = spark_runner.build_augmented_task("task", [], cross_goal_observations=None)
         assert "KNOWLEDGE FROM PRIOR" not in result
+
+    def test_ui_instructions_injected_no_context(self) -> None:
+        result = spark_runner.build_augmented_task(
+            "Do something", [], ui_instructions=["Save is blue", "Toast top-right"],
+        )
+        assert "SITE-SPECIFIC UI INSTRUCTIONS" in result
+        assert "- Save is blue" in result
+        assert "- Toast top-right" in result
+
+    def test_ui_instructions_injected_with_context(self) -> None:
+        summaries = [{"name": "Login", "outcome": "SUCCESS", "summary": "OK"}]
+        result = spark_runner.build_augmented_task(
+            "Next step", summaries, ui_instructions=["Hint A"],
+        )
+        assert "SITE-SPECIFIC UI INSTRUCTIONS" in result
+        assert "- Hint A" in result
+        assert "CONTEXT FROM PRIOR PHASES" in result
+
+    def test_ui_instructions_empty_list_not_injected(self) -> None:
+        result = spark_runner.build_augmented_task("task", [], ui_instructions=[])
+        assert "SITE-SPECIFIC UI INSTRUCTIONS" not in result
+
+    def test_ui_instructions_none_not_injected(self) -> None:
+        result = spark_runner.build_augmented_task("task", [], ui_instructions=None)
+        assert "SITE-SPECIFIC UI INSTRUCTIONS" not in result

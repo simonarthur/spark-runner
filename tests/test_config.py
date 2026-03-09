@@ -300,6 +300,35 @@ class TestParseEnvironments:
         result = _parse_environments({"bad": "string_value"})
         assert result == {}
 
+    def test_parses_ui_instructions_list(self) -> None:
+        raw = {
+            "staging": {
+                "base_url": "https://staging.example.com",
+                "ui_instructions": ["hint A", "hint B"],
+            },
+        }
+        result = _parse_environments(raw)
+        assert result["staging"].ui_instructions == ["hint A", "hint B"]
+
+    def test_parses_ui_instructions_single_string(self) -> None:
+        raw = {
+            "staging": {
+                "base_url": "https://staging.example.com",
+                "ui_instructions": "single hint",
+            },
+        }
+        result = _parse_environments(raw)
+        assert result["staging"].ui_instructions == ["single hint"]
+
+    def test_ui_instructions_default_empty(self) -> None:
+        raw = {
+            "staging": {
+                "base_url": "https://staging.example.com",
+            },
+        }
+        result = _parse_environments(raw)
+        assert result["staging"].ui_instructions == []
+
 
 # ── build_config: environment selection ──────────────────────────────────
 
@@ -401,6 +430,63 @@ class TestBuildConfigEnvironments:
         config = build_config(config_path=config_file, data_dir=tmp_path)
         assert config.environments == {}
         assert config.active_environment is None
+
+
+# ── build_config: ui_instructions ────────────────────────────────────────
+
+
+class TestBuildConfigUiInstructions:
+    def test_ui_instructions_from_general_list(self, tmp_path: Path) -> None:
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(
+            "general:\n"
+            "  ui_instructions:\n"
+            "    - 'Save button is blue'\n"
+            "    - 'Toast appears top-right'\n"
+        )
+        config = build_config(config_path=config_file, data_dir=tmp_path)
+        assert config.ui_instructions == ["Save button is blue", "Toast appears top-right"]
+
+    def test_ui_instructions_from_general_single_string(self, tmp_path: Path) -> None:
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(
+            "general:\n"
+            "  ui_instructions: 'Single hint'\n"
+        )
+        config = build_config(config_path=config_file, data_dir=tmp_path)
+        assert config.ui_instructions == ["Single hint"]
+
+    def test_ui_instructions_default_empty(self, tmp_path: Path) -> None:
+        config = build_config(data_dir=tmp_path)
+        assert config.ui_instructions == []
+
+    def test_env_override_replaces_general_ui_instructions(self, tmp_path: Path) -> None:
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(
+            "general:\n"
+            "  ui_instructions:\n"
+            "    - 'General hint'\n"
+            "environments:\n"
+            "  staging:\n"
+            "    base_url: https://staging.example.com\n"
+            "    ui_instructions:\n"
+            "      - 'Staging hint'\n"
+        )
+        config = build_config(config_path=config_file, data_dir=tmp_path, env="staging")
+        assert config.ui_instructions == ["Staging hint"]
+
+    def test_env_without_ui_instructions_keeps_general(self, tmp_path: Path) -> None:
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(
+            "general:\n"
+            "  ui_instructions:\n"
+            "    - 'General hint'\n"
+            "environments:\n"
+            "  staging:\n"
+            "    base_url: https://staging.example.com\n"
+        )
+        config = build_config(config_path=config_file, data_dir=tmp_path, env="staging")
+        assert config.ui_instructions == ["General hint"]
 
 
 # ── resolve_config_path ──────────────────────────────────────────────────

@@ -41,6 +41,7 @@ class EnvironmentProfile:
     base_url: str = ""
     is_production: bool = False
     credentials: dict[str, CredentialProfile] = field(default_factory=dict)
+    ui_instructions: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -84,6 +85,7 @@ class SparkConfig:
     classification_rules_path: Path = field(
         default_factory=lambda: Path("classification_rules.txt")
     )
+    ui_instructions: list[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         if self.tasks_dir is None:

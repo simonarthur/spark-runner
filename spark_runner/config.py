@@ -92,11 +92,15 @@ def _parse_environments(raw: dict[str, Any]) -> dict[str, EnvironmentProfile]:
             raw_creds = env_data.get("credentials", {})
             if raw_creds:
                 creds = _parse_credentials(raw_creds)
+            raw_ui = env_data.get("ui_instructions", [])
+            if isinstance(raw_ui, str):
+                raw_ui = [raw_ui]
             result[name] = EnvironmentProfile(
                 name=name,
                 base_url=env_data.get("base_url", ""),
                 is_production=bool(env_data.get("is_production", False)),
                 credentials=creds,
+                ui_instructions=raw_ui,
             )
     return result
 
@@ -503,6 +507,12 @@ def build_config(
     if yaml_envs:
         environments = _parse_environments(yaml_envs)
 
+    # UI instructions
+    raw_ui_instructions: Any = general.get("ui_instructions", [])
+    if isinstance(raw_ui_instructions, str):
+        raw_ui_instructions = [raw_ui_instructions]
+    ui_instructions: list[str] = list(raw_ui_instructions)
+
     # Apply environment overrides when --env is specified
     active_environment: str | None = None
     if env is not None:
@@ -521,6 +531,10 @@ def build_config(
         # Environment credentials replace global ones (CLI --credential-profile still takes priority)
         if env_profile.credentials:
             credentials = env_profile.credentials
+
+        # Environment ui_instructions override general-level
+        if env_profile.ui_instructions:
+            ui_instructions = env_profile.ui_instructions
 
     config = SparkConfig(
         data_dir=resolved_data_dir,
@@ -543,6 +557,7 @@ def build_config(
         auto_close=auto_close,
         headless=headless,
         regenerate_tasks=regenerate_tasks,
+        ui_instructions=ui_instructions,
     )
     return config
 

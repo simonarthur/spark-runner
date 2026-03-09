@@ -233,11 +233,13 @@ def build_augmented_task(
     original_task: str,
     prior_summaries: list[dict[str, str]],
     cross_goal_observations: list[str | dict[str, str]] | None = None,
+    ui_instructions: list[str] | None = None,
 ) -> str:
     """Prepend accumulated context to a phase's task instructions."""
     return _ex.build_augmented_task(
         original_task, prior_summaries, _restore_from_storage,
         cross_goal_observations=cross_goal_observations,
+        ui_instructions=ui_instructions,
     )
 
 

@@ -408,6 +408,7 @@ async def run_single(
             augmented_task: str = build_augmented_task(
                 phase["task"], prior_summaries, restore_fn,
                 cross_goal_observations=cross_obs,
+                ui_instructions=config.ui_instructions,
             )
             augmented_task_truncated: str = (
                 augmented_task[:1000] + "..." if len(augmented_task) > 1000 else augmented_task

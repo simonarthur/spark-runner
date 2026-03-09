@@ -51,6 +51,7 @@ def build_augmented_task(
     prior_summaries: list[dict[str, str]],
     restore_fn: Callable[[str], str],
     cross_goal_observations: list[str | dict[str, str]] | None = None,
+    ui_instructions: list[str] | None = None,
 ) -> str:
     """Prepend accumulated context to a phase's task instructions.
 
@@ -59,10 +60,16 @@ def build_augmented_task(
         prior_summaries: Summaries of all preceding phases in the current run.
         restore_fn: Function to restore placeholders in stored text.
         cross_goal_observations: Optional observations from prior goal runs.
+        ui_instructions: Optional site-specific UI hints to inject.
 
     Returns:
         The augmented task string with context sections prepended.
     """
+    rules_text: str = _PHASE_RULES
+    if ui_instructions:
+        rules_text += "\n\n=== SITE-SPECIFIC UI INSTRUCTIONS ===\n"
+        rules_text += "\n".join(f"- {instr}" for instr in ui_instructions)
+
     context_parts: list[str] = []
 
     if cross_goal_observations:
@@ -79,10 +86,10 @@ def build_augmented_task(
         context_parts.append("")
 
     if not context_parts:
-        return restore_fn(f"{_PHASE_RULES}\n\n{original_task}")
+        return restore_fn(f"{rules_text}\n\n{original_task}")
 
     context_parts.append("=== YOUR TASK (use the context above to inform your actions) ===\n")
-    context_parts.append(_PHASE_RULES + "\n")
+    context_parts.append(rules_text + "\n")
     task_text: str = "\n".join(context_parts) + original_task
     return restore_fn(task_text)
 
