@@ -331,6 +331,27 @@ class TestRunGoalFileValidation:
         assert task_spec.goal_path == goal
 
     @patch("spark_runner.cli.build_config")
+    @patch("spark_runner.orchestrator.run_single", new_callable=AsyncMock)
+    def test_goal_name_resolved_with_task_suffix(
+        self,
+        mock_run: AsyncMock,
+        mock_config: MagicMock,
+        runner: click.testing.CliRunner,
+        tmp_path: Path,
+    ) -> None:
+        """A bare task name resolves to {name}-task.json in goal_summaries_dir."""
+        gs_dir = tmp_path / "goal_summaries"
+        gs_dir.mkdir()
+        goal = gs_dir / "login-task.json"
+        goal.write_text("{}")
+        mock_cfg = MagicMock(base_url="https://x.com", goal_summaries_dir=gs_dir)
+        mock_config.return_value = mock_cfg
+        result = runner.invoke(cli, ["run", "login"])
+        assert result.exit_code == 0
+        task_spec = mock_run.call_args.args[0]
+        assert task_spec.goal_path == goal
+
+    @patch("spark_runner.cli.build_config")
     def test_goal_name_not_found_in_goal_summaries_dir(
         self,
         mock_config: MagicMock,

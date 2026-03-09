@@ -51,6 +51,10 @@ def _resolve_goal_file(name: str, goal_summaries_dir: Path | None) -> Path:
         with_ext = goal_summaries_dir / f"{name}.json"
         if with_ext.exists():
             return with_ext
+        # Try with -task.json suffix (canonical goal file naming)
+        with_task_ext = goal_summaries_dir / f"{name}-task.json"
+        if with_task_ext.exists():
+            return with_task_ext
 
     # Collect available goal names for suggestions
     hint = ""
