@@ -77,7 +77,7 @@ def list_goals(
         try:
             data: dict[str, Any] = json.loads(restore_fn(goal_file.read_text()))
         except (json.JSONDecodeError, OSError):
-            print(f"  {goal_file.name}  (unreadable)")
+            print(f" {goal_file.stem}  (unreadable)")
             continue
         main_task: str = data.get("main_task", "(no description)")
         num_subtasks: int = len(data.get("subtasks", []))
@@ -92,8 +92,8 @@ def list_goals(
             if isinstance(o, dict) and o.get("severity") == "warning"
         )
         num_unclassified: int = num_observations - num_errors - num_warnings
-        print(f"  {goal_file.name}")
-        print(f"    Task: {main_task}")
+        print(f"{goal_file.stem}")
+        print(f"  {main_task}")
         severity_parts: list[str] = []
         if num_errors:
             severity_parts.append(f"{num_errors} errors")
@@ -114,11 +114,10 @@ def list_goals(
         last_run_info = get_last_run_info(runs_dir, task_name)
         if last_run_info:
             timestamp, status = last_run_info
-            last_run_str = f"  Last run: {timestamp} [{status}]"
+            last_run_str = f"Last run: {timestamp} [{status}]"
         else:
             last_run_str = "  Last run: never"
-        print(f"    Subtasks: {num_subtasks}  Observations: {num_observations}{severity_str}{safety_label}")
-        print(f"   {last_run_str}")
+        print(f"  Subtasks: {num_subtasks}  Observations: {num_observations}{severity_str}{safety_label}  {last_run_str}")
         print()
 
 

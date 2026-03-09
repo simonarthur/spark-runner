@@ -304,6 +304,15 @@ class TestGoalsSafetyDisplay:
         output = capsys.readouterr().out
         assert "restricted" not in output
 
+    def test_list_goals_shows_stem_not_json_suffix(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        _write_goal(tmp_path, "my-goal")
+        list_goals(tmp_path, _identity, None)
+        output = capsys.readouterr().out
+        assert "my-goal-task" in output
+        assert ".json" not in output
+
     def test_show_goal_detail_shows_safety_block(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
     ) -> None:
