@@ -175,15 +175,19 @@ class TestLoadGoalSummary:
         assert phases[0]["name"] == "Login"
         assert spark_runner._REPLAY_PREFIX in phases[0]["task"]
 
-    def test_raises_on_missing_subtask(self, fake_tasks_dir: Path) -> None:
+    def test_skips_missing_subtask_with_warning(
+        self, fake_tasks_dir: Path, capsys: pytest.CaptureFixture[str],
+    ) -> None:
         goal: dict[str, Any] = {
             "main_task": "test",
             "subtasks": [{"filename": "nope.txt"}],
         }
         goal_path = fake_tasks_dir.parent / "goal.json"
         goal_path.write_text(json.dumps(goal))
-        with pytest.raises(FileNotFoundError):
-            spark_runner.load_goal_summary(goal_path)
+        prompt, task_name, phases = spark_runner.load_goal_summary(goal_path)
+        assert prompt == "test"
+        assert phases == []
+        assert "Warning: subtask file not found" in capsys.readouterr().out
 
     def test_skips_non_dict_subtask_entries(self, fake_tasks_dir: Path) -> None:
         (fake_tasks_dir / "step.txt").write_text("Do the thing")

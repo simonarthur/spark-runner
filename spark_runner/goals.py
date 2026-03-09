@@ -146,7 +146,8 @@ def load_goal_summary(
             continue
         subtask_path: Path = tasks_dir / entry["filename"]
         if not subtask_path.exists():
-            raise FileNotFoundError(f"Subtask file not found: {subtask_path}")
+            print(f"  Warning: subtask file not found {subtask_path}, skipping")
+            continue
         task_content: str = restore_fn(subtask_path.read_text())
         name: str = subtask_path.stem.replace("-", " ").title()
         phases.append({"name": name, "task": _REPLAY_PREFIX + task_content})
