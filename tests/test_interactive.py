@@ -175,6 +175,16 @@ class TestSparkCompleter:
         assert "--unrun" in results
         assert "--failed" in results
 
+    def test_completes_run_flags(self, tmp_path: Path) -> None:
+        config = _make_config(tmp_path)
+        completer = SparkCompleter(config)
+        results = self._complete(completer, "run --")
+        assert "--unrun" in results
+        assert "--failed" in results
+        assert "--no-update-summary" in results
+        assert "--no-update-tasks" in results
+        assert "--no-knowledge-reuse" in results
+
     def test_completes_run_paths(self, tmp_path: Path) -> None:
         config = _make_config(tmp_path)
         assert config.runs_dir is not None
@@ -297,6 +307,95 @@ class TestDispatch:
         output = capsys.readouterr().out
         assert "Running 1 goal" in output
         mock_asyncio.run.assert_called_once()
+
+    @patch("spark_runner.orchestrator.run_single")
+    @patch("spark_runner.interactive.asyncio")
+    def test_run_no_update_summary_flag(
+        self, mock_asyncio: MagicMock, mock_run: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        config = _make_config(tmp_path)
+        assert config.goal_summaries_dir is not None
+        _write_goal(config.goal_summaries_dir, "login")
+        dispatch("run", ["login", "--no-update-summary"], config, _identity)
+        call_args = mock_asyncio.run.call_args[0][0]
+        # Coroutine wraps run_single(task, run_config) — get the config from the mock
+        mock_run.assert_called_once()
+        passed_config = mock_run.call_args[0][1]
+        assert passed_config.update_summary is False
+        assert passed_config.update_tasks is True
+        assert passed_config.knowledge_reuse is True
+
+    @patch("spark_runner.orchestrator.run_single")
+    @patch("spark_runner.interactive.asyncio")
+    def test_run_no_update_tasks_flag(
+        self, mock_asyncio: MagicMock, mock_run: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        config = _make_config(tmp_path)
+        assert config.goal_summaries_dir is not None
+        _write_goal(config.goal_summaries_dir, "login")
+        dispatch("run", ["login", "--no-update-tasks"], config, _identity)
+        mock_run.assert_called_once()
+        passed_config = mock_run.call_args[0][1]
+        assert passed_config.update_tasks is False
+        assert passed_config.update_summary is True
+        assert passed_config.knowledge_reuse is True
+
+    @patch("spark_runner.orchestrator.run_single")
+    @patch("spark_runner.interactive.asyncio")
+    def test_run_no_knowledge_reuse_flag(
+        self, mock_asyncio: MagicMock, mock_run: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        config = _make_config(tmp_path)
+        assert config.goal_summaries_dir is not None
+        _write_goal(config.goal_summaries_dir, "login")
+        dispatch("run", ["login", "--no-knowledge-reuse"], config, _identity)
+        mock_run.assert_called_once()
+        passed_config = mock_run.call_args[0][1]
+        assert passed_config.knowledge_reuse is False
+        assert passed_config.update_summary is True
+        assert passed_config.update_tasks is True
+
+    @patch("spark_runner.orchestrator.run_single")
+    @patch("spark_runner.interactive.asyncio")
+    def test_run_all_no_flags(
+        self, mock_asyncio: MagicMock, mock_run: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        config = _make_config(tmp_path)
+        assert config.goal_summaries_dir is not None
+        _write_goal(config.goal_summaries_dir, "login")
+        dispatch(
+            "run",
+            ["login", "--no-update-summary", "--no-update-tasks", "--no-knowledge-reuse"],
+            config, _identity,
+        )
+        mock_run.assert_called_once()
+        passed_config = mock_run.call_args[0][1]
+        assert passed_config.update_summary is False
+        assert passed_config.update_tasks is False
+        assert passed_config.knowledge_reuse is False
+
+    @patch("spark_runner.orchestrator.run_single")
+    @patch("spark_runner.interactive.asyncio")
+    def test_run_flags_do_not_mutate_original_config(
+        self, mock_asyncio: MagicMock, mock_run: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        config = _make_config(tmp_path)
+        assert config.goal_summaries_dir is not None
+        _write_goal(config.goal_summaries_dir, "login")
+        dispatch(
+            "run",
+            ["login", "--no-update-summary", "--no-update-tasks", "--no-knowledge-reuse"],
+            config, _identity,
+        )
+        # Original config must remain unchanged
+        assert config.update_summary is True
+        assert config.update_tasks is True
+        assert config.knowledge_reuse is True
 
     def test_results_empty(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str],

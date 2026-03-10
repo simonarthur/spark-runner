@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import shlex
 from pathlib import Path
 from typing import Any, Callable
@@ -20,7 +21,7 @@ from spark_runner.models import SparkConfig
 COMMANDS: dict[str, str] = {
     "goals": "List all goals (--unrun, --failed)",
     "show": "Show goal detail: show <goal>",
-    "run": "Run goal(s): run <goal> ... (--unrun, --failed)",
+    "run": "Run goal(s): run <goal> ... (--unrun, --failed, --no-update-summary, --no-update-tasks, --no-knowledge-reuse)",
     "delete": "Delete a goal: delete <goal>",
     "results": "List runs, or show detail: results [task/timestamp]",
     "errors": "Show runs with errors",
@@ -95,7 +96,7 @@ class SparkCompleter(Completer):
             if cmd == "goals":
                 flags = ["--unrun", "--failed"]
             elif cmd == "run":
-                flags = ["--unrun", "--failed"]
+                flags = ["--unrun", "--failed", "--no-update-summary", "--no-update-tasks", "--no-knowledge-reuse"]
             elif cmd == "orphans":
                 flags = ["--clean"]
             for flag in flags:
@@ -216,6 +217,9 @@ def _handle_run(args: list[str], config: SparkConfig) -> None:
 
     filter_unrun = "--unrun" in args
     filter_failed = "--failed" in args
+    no_update_summary = "--no-update-summary" in args
+    no_update_tasks = "--no-update-tasks" in args
+    no_knowledge_reuse = "--no-knowledge-reuse" in args
     goal_names = [a for a in args if not a.startswith("--")]
 
     tasks: list[TaskSpec] = []
@@ -248,13 +252,25 @@ def _handle_run(args: list[str], config: SparkConfig) -> None:
         print("No goals specified. Usage: run <goal> [goal...] or run --unrun/--failed")
         return
 
+    # Build per-run config with flag overrides
+    run_config = config
+    overrides: dict[str, bool] = {}
+    if no_update_summary:
+        overrides["update_summary"] = False
+    if no_update_tasks:
+        overrides["update_tasks"] = False
+    if no_knowledge_reuse:
+        overrides["knowledge_reuse"] = False
+    if overrides:
+        run_config = dataclasses.replace(config, **overrides)
+
     print(f"Running {len(tasks)} goal(s)...\n")
     from spark_runner.orchestrator import run_multiple, run_single
 
     if len(tasks) == 1:
-        asyncio.run(run_single(tasks[0], config))
+        asyncio.run(run_single(tasks[0], run_config))
     else:
-        asyncio.run(run_multiple(tasks, config))
+        asyncio.run(run_multiple(tasks, run_config))
 
 
 def _handle_delete(args: list[str], config: SparkConfig) -> None:
