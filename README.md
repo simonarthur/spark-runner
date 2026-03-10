@@ -70,6 +70,9 @@ general:
   data_dir: ~/spark_runner
   base_url: https://your-app.example.com
   use_browseruse_llm: false
+  ui_instructions:
+    - "The primary Save button is blue, at the bottom-right of forms"
+    - "Toast notifications appear top-right and auto-dismiss after 3s"
 
 api_keys:
   anthropic: $ANTHROPIC_API_KEY
@@ -82,10 +85,13 @@ credentials:
   admin:
     email: admin@example.com
     password: $SPARK_RUNNER_ADMIN_PASSWORD
+    api_key: $ADMIN_API_KEY          # extra fields go to .extra dict
 
 environments:
   staging:
     base_url: https://staging.example.com
+    ui_instructions:
+      - "Staging has a yellow banner at top -- ignore it"
     credentials:
       default:
         email: $SPARK_RUNNER_STAGING_DEFAULT_EMAIL
@@ -101,11 +107,77 @@ models:
   summarization:
     model: claude-sonnet-4-5-20250929
     max_tokens: 2048
+    temperature: 0.0
 ```
 
 Credential values support `$VAR` and `${VAR}` syntax. If the variable is set in the environment, it resolves. If not, the literal string is kept — a visible scar reminding you to set it.
 
+### UI Instructions
+
+Site-specific UI hints that get injected into every phase prompt, so the browser agent knows about visual quirks before it starts interacting. Define them under `general.ui_instructions` for global hints, or under an environment to override them:
+
+```yaml
+general:
+  ui_instructions:
+    - "The primary Save button is blue, at the bottom-right of forms"
+    - "Toast notifications appear top-right and auto-dismiss"
+
+environments:
+  staging:
+    base_url: https://staging.example.com
+    ui_instructions:
+      - "Staging has a yellow banner at top -- ignore it"
+      - "The primary Save button is blue, at the bottom-right of forms"
+```
+
+When `--env staging` is selected, the environment's `ui_instructions` **replace** the general ones entirely (they do not merge). If an environment omits `ui_instructions`, the general-level list is used. A single string is also accepted and automatically wrapped into a list.
+
+### Credential Profiles
+
+Each profile requires `email` and `password`. Any additional keys are stored in an `extra` dict, accessible via `config.credentials["profile_name"].extra`:
+
+```yaml
+credentials:
+  default:
+    email: user@example.com
+    password: secret
+  service_account:
+    email: bot@example.com
+    password: botpass
+    api_key: sk-service-123    # available as .extra["api_key"]
+    org_id: org-456            # available as .extra["org_id"]
+```
+
+### Classification Rules
+
+Observation classification — the process that decides whether something is an error or a warning — can be guided by a rules file. By default Spark Runner looks for `classification_rules.txt` in the working directory. The format is simple:
+
+```
+# Lines starting with # are comments. Blank lines are ignored.
+
+[ERRORS]
+Form submission failing or producing an application error
+A feature that required a workaround using a different mechanism
+
+[WARNINGS]
+An already-active session detected when login is requested
+A URL that changed but the feature still works
+```
+
+Rules under `[ERRORS]` bias the classifier toward marking matching observations as errors; rules under `[WARNINGS]` bias toward warnings. These are prioritized hints to the LLM, not exact string matches.
+
 ## Commands
+
+### Global Options
+
+These apply to all subcommands:
+
+```bash
+spark-runner [--data-dir PATH] [--config PATH] <command>
+
+  --data-dir PATH               Spark Runner home directory (default: ~/spark_runner)
+  --config PATH                 Config file path (default: <data-dir>/config.yaml)
+```
 
 ### Running Tasks
 
@@ -193,7 +265,7 @@ A goal marked `blocked_in_production` will refuse to run in a production environ
 
 ## LLM Models
 
-Six model slots, each configurable independently:
+Six model slots, each configurable independently. Each accepts `model`, `max_tokens`, and `temperature`:
 
 | Purpose | Default | Max Tokens | Role |
 |---|---|---|---|
@@ -219,12 +291,17 @@ spark-runner run --model task_decomposition=claude-opus-4-6 goal.json
 | `SPARK_RUNNER_BASE_URL` | Base URL override |
 | `ANTHROPIC_API_KEY` | Claude API key |
 | `BROWSER_USE_API_KEY` | BrowserUse cloud key |
+| `USER_EMAIL` | Legacy: overrides default credential email |
+| `USER_PASSWORD` | Legacy: overrides default credential password |
+
+The setup wizard can also generate per-profile env vars (e.g. `SPARK_RUNNER_ADMIN_EMAIL`, `SPARK_RUNNER_STAGING_DEFAULT_PASSWORD`) when you choose env-var mode for secrets.
 
 ## Data Directory Structure
 
 ```
 ~/spark_runner/
 ├── config.yaml
+├── classification_rules.txt  # Optional observation classification hints
 ├── tasks/                    # Phase instruction files
 ├── goal_summaries/           # Goal metadata (JSON)
 └── runs/
