@@ -260,12 +260,17 @@ def _get_config_path(ctx: click.Context) -> str | None:
               help="Spark Runner home directory (tasks, goal summaries, runs). Default: ~/spark_runner")
 @click.option("--config", "config_path", type=click.Path(), default=None,
               help="Config file path")
+@click.option("-i", "--interactive", "interactive_mode", is_flag=True, default=False,
+              help="Launch interactive REPL")
 @click.pass_context
-def cli(ctx: click.Context, data_dir: str | None, config_path: str | None) -> None:
+def cli(ctx: click.Context, data_dir: str | None, config_path: str | None, interactive_mode: bool) -> None:
     """Spark Runner – Browser Automation."""
     ctx.ensure_object(dict)
     ctx.obj["data_dir"] = data_dir
     ctx.obj["config_path"] = config_path
+    if interactive_mode:
+        ctx.invoke(interactive_cmd)
+        return
     if ctx.invoked_subcommand is None:
         resolved_cfg = resolve_config_path(
             config_path=Path(config_path) if config_path else None,
@@ -301,6 +306,26 @@ def init(ctx: click.Context, force: bool) -> None:
             return
 
     run_setup_wizard(config_path)
+
+
+@cli.command("interactive")
+@click.pass_context
+def interactive_cmd(ctx: click.Context) -> None:
+    """Launch interactive REPL with tab completion."""
+    data_dir = _get_data_dir(ctx)
+    config_path = _get_config_path(ctx)
+    try:
+        config: SparkConfig = build_config(
+            config_path=Path(config_path) if config_path else None,
+            data_dir=Path(data_dir) if data_dir else None,
+        )
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+    config.ensure_dirs()
+
+    from spark_runner.interactive import interactive_loop
+
+    interactive_loop(config)
 
 
 def _validate_url(
