@@ -13,7 +13,6 @@ dependencies = [
     "python-dotenv",
     "click",
     "pyyaml",
-    "prompt_toolkit",
 ]
 
 [tool.setuptools.packages.find]

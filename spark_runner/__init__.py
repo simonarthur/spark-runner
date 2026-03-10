@@ -23,7 +23,6 @@ from dotenv import load_dotenv
 from spark_runner.models import (
     ClassificationRules,
     CredentialProfile,
-    GoalInfo,
     ModelConfig,
     PhaseResult,
     RunResult,

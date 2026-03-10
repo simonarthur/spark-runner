@@ -8,7 +8,6 @@ from typing import Any, Callable
 
 from spark_runner.classification import _observation_text
 from spark_runner.execution import _REPLAY_PREFIX
-from spark_runner.models import GoalInfo
 
 
 def get_last_run_info(
@@ -44,29 +43,19 @@ def get_last_run_info(
     return last_dir.name, status
 
 
-def get_goal_summaries(
+def list_goals(
     goal_summaries_dir: Path,
     restore_fn: Callable[[str], str],
     runs_dir: Path | None = None,
     *,
     filter_unrun: bool = False,
     filter_failed: bool = False,
-) -> list[GoalInfo]:
-    """Return structured summaries for all goals in *goal_summaries_dir*.
-
-    Args:
-        goal_summaries_dir: Directory containing goal summary JSON files.
-        restore_fn: Function to restore placeholders in stored text.
-        runs_dir: Directory containing run result directories.
-        filter_unrun: If True, only include goals that have never been run.
-        filter_failed: If True, only include goals whose last run had errors.
-
-    Returns:
-        A list of :class:`GoalInfo` objects, sorted by file name.
-    """
+) -> None:
+    """Print a summary of all existing goals from the goal summaries directory."""
     goal_files: list[Path] = sorted(goal_summaries_dir.glob("*-task.json"))
     if not goal_files:
-        return []
+        print("No goals found.")
+        return
 
     # Apply --unrun / --failed filters when requested
     if filter_unrun or filter_failed:
@@ -79,98 +68,56 @@ def get_goal_summaries(
             elif filter_failed and run_info is not None and run_info[1] == "errors":
                 filtered.append(gf)
         goal_files = filtered
+        if not goal_files:
+            print("No matching goals found.")
+            return
 
-    results: list[GoalInfo] = []
+    print(f"Found {len(goal_files)} goal(s):\n")
     for goal_file in goal_files:
         try:
             data: dict[str, Any] = json.loads(restore_fn(goal_file.read_text()))
         except (json.JSONDecodeError, OSError):
-            results.append(GoalInfo(
-                name=goal_file.stem.removesuffix("-task"),
-                file_path=goal_file,
-                main_task="(unreadable)",
-            ))
+            print(f" {goal_file.stem}  (unreadable)")
             continue
-
+        main_task: str = data.get("main_task", "(no description)")
+        num_subtasks: int = len(data.get("subtasks", []))
         observations: list[str | dict[str, str]] = data.get("key_observations", [])
-        num_errors = sum(
+        num_observations: int = len(observations)
+        num_errors: int = sum(
             1 for o in observations
             if isinstance(o, dict) and o.get("severity") == "error"
         )
-        num_warnings = sum(
+        num_warnings: int = sum(
             1 for o in observations
             if isinstance(o, dict) and o.get("severity") == "warning"
         )
-
-        task_name = goal_file.stem.removesuffix("-task")
-        run_info = get_last_run_info(runs_dir, task_name)
-        last_ts: str | None = None
-        last_status: str | None = None
-        if run_info is not None:
-            last_ts, last_status = run_info
-
-        results.append(GoalInfo(
-            name=task_name,
-            file_path=goal_file,
-            main_task=data.get("main_task", "(no description)"),
-            num_subtasks=len(data.get("subtasks", [])),
-            num_observations=len(observations),
-            num_errors=num_errors,
-            num_warnings=num_warnings,
-            last_run_timestamp=last_ts,
-            last_run_status=last_status,
-            safety=data.get("safety", {}),
-        ))
-
-    return results
-
-
-def list_goals(
-    goal_summaries_dir: Path,
-    restore_fn: Callable[[str], str],
-    runs_dir: Path | None = None,
-    *,
-    filter_unrun: bool = False,
-    filter_failed: bool = False,
-) -> None:
-    """Print a summary of all existing goals from the goal summaries directory."""
-    summaries = get_goal_summaries(
-        goal_summaries_dir, restore_fn, runs_dir,
-        filter_unrun=filter_unrun, filter_failed=filter_failed,
-    )
-    if not summaries:
-        label = "No matching goals found." if (filter_unrun or filter_failed) else "No goals found."
-        print(label)
-        return
-
-    print(f"Found {len(summaries)} goal(s):\n")
-    for info in summaries:
-        if info.main_task == "(unreadable)":
-            print(f" {info.name}-task  (unreadable)")
-            continue
-        print(f"{info.name}-task")
-        print(f"  {info.main_task}")
-        num_unclassified = info.num_observations - info.num_errors - info.num_warnings
+        num_unclassified: int = num_observations - num_errors - num_warnings
+        print(f"{goal_file.stem}")
+        print(f"  {main_task}")
         severity_parts: list[str] = []
-        if info.num_errors:
-            severity_parts.append(f"{info.num_errors} errors")
-        if info.num_warnings:
-            severity_parts.append(f"{info.num_warnings} warnings")
+        if num_errors:
+            severity_parts.append(f"{num_errors} errors")
+        if num_warnings:
+            severity_parts.append(f"{num_warnings} warnings")
         if num_unclassified:
             severity_parts.append(f"{num_unclassified} unclassified")
-        severity_str = f" ({', '.join(severity_parts)})" if severity_parts else ""
-        safety_label = ""
-        if info.safety:
-            if info.safety.get("blocked_in_production"):
+        severity_str: str = f" ({', '.join(severity_parts)})" if severity_parts else ""
+        safety_raw: dict[str, Any] = data.get("safety", {})
+        safety_label: str = ""
+        if safety_raw:
+            if safety_raw.get("blocked_in_production"):
                 safety_label = " [restricted: production-blocked]"
-            elif info.safety.get("allowed_environments"):
-                envs = ", ".join(info.safety["allowed_environments"])
+            elif safety_raw.get("allowed_environments"):
+                envs = ", ".join(safety_raw["allowed_environments"])
                 safety_label = f" [restricted: {envs} only]"
-        if info.last_run_timestamp:
-            last_run_str = f"Last run: {info.last_run_timestamp} [{info.last_run_status}]"
+        task_name = goal_file.stem.removesuffix("-task")
+        last_run_info = get_last_run_info(runs_dir, task_name)
+        if last_run_info:
+            timestamp, status = last_run_info
+            last_run_str = f"Last run: {timestamp} [{status}]"
         else:
             last_run_str = "  Last run: never"
-        print(f"  Subtasks: {info.num_subtasks}  Observations: {info.num_observations}{severity_str}{safety_label}  {last_run_str}")
+        print(f"  Subtasks: {num_subtasks}  Observations: {num_observations}{severity_str}{safety_label}  {last_run_str}")
         print()
 
 

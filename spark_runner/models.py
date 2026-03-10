@@ -55,22 +55,6 @@ class GoalSafety:
 
 
 @dataclass
-class GoalInfo:
-    """Structured summary of a goal for programmatic use."""
-
-    name: str
-    file_path: Path
-    main_task: str
-    num_subtasks: int = 0
-    num_observations: int = 0
-    num_errors: int = 0
-    num_warnings: int = 0
-    last_run_timestamp: str | None = None
-    last_run_status: str | None = None
-    safety: dict[str, Any] = field(default_factory=dict)
-
-
-@dataclass
 class SparkConfig:
     """Central configuration for spark_runner."""
 
