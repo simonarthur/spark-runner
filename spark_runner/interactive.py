@@ -11,7 +11,7 @@ from typing import Any, Callable
 from prompt_toolkit import PromptSession
 from prompt_toolkit.completion import Completer, Completion
 from prompt_toolkit.document import Document
-from prompt_toolkit.history import InMemoryHistory
+from prompt_toolkit.history import FileHistory
 
 from spark_runner.models import SparkConfig
 
@@ -360,9 +360,10 @@ def interactive_loop(config: SparkConfig) -> None:
     assert config.goal_summaries_dir is not None
     assert config.tasks_dir is not None
 
+    history_path = config.data_dir / ".repl_history"
     session: PromptSession[str] = PromptSession(
         completer=SparkCompleter(config),
-        history=InMemoryHistory(),
+        history=FileHistory(str(history_path)),
     )
 
     print("Spark Runner interactive mode. Type 'help' for commands, Ctrl-D to exit.\n")

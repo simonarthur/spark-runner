@@ -480,6 +480,35 @@ class TestGetGoalSummaries:
         assert result[0].name == "never-run"
 
 
+# ── interactive_loop ─────────────────────────────────────────────────
+
+
+class TestInteractiveLoop:
+    @patch("spark_runner.interactive.PromptSession")
+    @patch("spark_runner.orchestrator._make_restore_fn", return_value=_identity)
+    def test_uses_file_history(
+        self, mock_restore: MagicMock, mock_session_cls: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        from prompt_toolkit.history import FileHistory
+
+        from spark_runner.interactive import interactive_loop
+
+        config = _make_config(tmp_path)
+        # Make the prompt raise EOFError immediately to exit the loop
+        mock_session = MagicMock()
+        mock_session.prompt.side_effect = EOFError
+        mock_session_cls.return_value = mock_session
+
+        interactive_loop(config)
+
+        # Verify FileHistory was passed with the correct path
+        call_kwargs = mock_session_cls.call_args[1]
+        history = call_kwargs["history"]
+        assert isinstance(history, FileHistory)
+        assert history.filename == str(config.data_dir / ".repl_history")
+
+
 # ── CLI flag ─────────────────────────────────────────────────────────
 
 
