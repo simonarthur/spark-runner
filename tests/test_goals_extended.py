@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 import pytest
 
-from spark_runner.goals import delete_goal, list_goals, show_goal_detail
+from spark_runner.goals import delete_goal, get_goal_summaries, list_goals, show_goal_detail
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────
@@ -39,6 +39,82 @@ def _write_goal(
 def _identity(text: str) -> str:
     """No-op restore function for use as restore_fn."""
     return text
+
+
+# ── get_goal_summaries ───────────────────────────────────────────────────
+
+
+class TestGetGoalSummaries:
+    def test_empty_dir(self, tmp_path: Path) -> None:
+        result = get_goal_summaries(tmp_path, _identity)
+        assert result == []
+
+    def test_returns_goal_info(self, tmp_path: Path) -> None:
+        _write_goal(tmp_path, "login", main_task="Log in")
+        result = get_goal_summaries(tmp_path, _identity)
+        assert len(result) == 1
+        assert result[0].name == "login"
+        assert result[0].main_task == "Log in"
+
+    def test_restore_fn_applied(self, tmp_path: Path) -> None:
+        goal_path = tmp_path / "encoded-task.json"
+        goal_path.write_text(json.dumps({
+            "main_task": "{BASE_URL}/page",
+            "subtasks": [],
+            "key_observations": [],
+        }))
+
+        def restore(text: str) -> str:
+            return text.replace("{BASE_URL}", "https://example.com")
+
+        result = get_goal_summaries(tmp_path, restore)
+        assert result[0].main_task == "https://example.com/page"
+
+    def test_counts_observations(self, tmp_path: Path) -> None:
+        _write_goal(
+            tmp_path, "obs",
+            observations=[
+                {"text": "err", "severity": "error"},
+                {"text": "warn", "severity": "warning"},
+                {"text": "warn2", "severity": "warning"},
+            ],
+        )
+        result = get_goal_summaries(tmp_path, _identity)
+        assert result[0].num_errors == 1
+        assert result[0].num_warnings == 2
+        assert result[0].num_observations == 3
+
+    def test_last_run_info_populated(self, tmp_path: Path) -> None:
+        gs_dir = tmp_path / "goals"
+        gs_dir.mkdir()
+        runs_dir = tmp_path / "runs"
+        runs_dir.mkdir()
+
+        _write_goal(gs_dir, "my-goal")
+        run_dir = runs_dir / "my-goal" / "2024-06-15"
+        run_dir.mkdir(parents=True)
+        (run_dir / "run_metadata.json").write_text(
+            json.dumps({"phases": [{"outcome": "SUCCESS"}]})
+        )
+
+        result = get_goal_summaries(gs_dir, _identity, runs_dir)
+        assert result[0].last_run_timestamp == "2024-06-15"
+        assert result[0].last_run_status == "ok"
+
+    def test_safety_field(self, tmp_path: Path) -> None:
+        _write_goal(
+            tmp_path, "safe-goal",
+            safety={"blocked_in_production": True},
+        )
+        result = get_goal_summaries(tmp_path, _identity)
+        assert result[0].safety == {"blocked_in_production": True}
+
+    def test_unreadable_file_included(self, tmp_path: Path) -> None:
+        bad = tmp_path / "broken-task.json"
+        bad.write_text("NOT JSON{{{")
+        result = get_goal_summaries(tmp_path, _identity)
+        assert len(result) == 1
+        assert result[0].main_task == "(unreadable)"
 
 
 # ── show_goal_detail ─────────────────────────────────────────────────────
