@@ -184,6 +184,7 @@ class TestSparkCompleter:
         assert "--no-update-summary" in results
         assert "--no-update-tasks" in results
         assert "--no-knowledge-reuse" in results
+        assert "--regenerate-tasks" in results
 
     def test_completes_run_paths(self, tmp_path: Path) -> None:
         config = _make_config(tmp_path)
@@ -396,6 +397,22 @@ class TestDispatch:
         assert config.update_summary is True
         assert config.update_tasks is True
         assert config.knowledge_reuse is True
+
+    @patch("spark_runner.orchestrator.run_single")
+    @patch("spark_runner.interactive.asyncio")
+    def test_run_regenerate_tasks_flag(
+        self, mock_asyncio: MagicMock, mock_run: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        config = _make_config(tmp_path)
+        assert config.goal_summaries_dir is not None
+        _write_goal(config.goal_summaries_dir, "login")
+        dispatch("run", ["login", "--regenerate-tasks"], config, _identity)
+        mock_run.assert_called_once()
+        passed_config = mock_run.call_args[0][1]
+        assert passed_config.regenerate_tasks is True
+        # Original config unchanged
+        assert config.regenerate_tasks is False
 
     def test_results_empty(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str],

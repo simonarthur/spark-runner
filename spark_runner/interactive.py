@@ -21,7 +21,7 @@ from spark_runner.models import SparkConfig
 COMMANDS: dict[str, str] = {
     "goals": "List all goals (--unrun, --failed)",
     "show": "Show goal detail: show <goal>",
-    "run": "Run goal(s): run <goal> ... (--unrun, --failed, --no-update-summary, --no-update-tasks, --no-knowledge-reuse)",
+    "run": "Run goal(s): run <goal> ... (--unrun, --failed, --no-update-summary, --no-update-tasks, --no-knowledge-reuse, --regenerate-tasks)",
     "delete": "Delete a goal: delete <goal>",
     "results": "List runs, or show detail: results [task/timestamp]",
     "errors": "Show runs with errors",
@@ -96,7 +96,7 @@ class SparkCompleter(Completer):
             if cmd == "goals":
                 flags = ["--unrun", "--failed"]
             elif cmd == "run":
-                flags = ["--unrun", "--failed", "--no-update-summary", "--no-update-tasks", "--no-knowledge-reuse"]
+                flags = ["--unrun", "--failed", "--no-update-summary", "--no-update-tasks", "--no-knowledge-reuse", "--regenerate-tasks"]
             elif cmd == "orphans":
                 flags = ["--clean"]
             for flag in flags:
@@ -220,6 +220,7 @@ def _handle_run(args: list[str], config: SparkConfig) -> None:
     no_update_summary = "--no-update-summary" in args
     no_update_tasks = "--no-update-tasks" in args
     no_knowledge_reuse = "--no-knowledge-reuse" in args
+    regenerate_tasks = "--regenerate-tasks" in args
     goal_names = [a for a in args if not a.startswith("--")]
 
     tasks: list[TaskSpec] = []
@@ -261,6 +262,8 @@ def _handle_run(args: list[str], config: SparkConfig) -> None:
         overrides["update_tasks"] = False
     if no_knowledge_reuse:
         overrides["knowledge_reuse"] = False
+    if regenerate_tasks:
+        overrides["regenerate_tasks"] = True
     if overrides:
         run_config = dataclasses.replace(config, **overrides)
 
