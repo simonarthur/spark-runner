@@ -15,19 +15,12 @@ from spark_runner.knowledge import (
 from tests.conftest import make_llm_response
 
 
-def _make_goal(index: int, content_size: int = 100) -> dict[str, Any]:
-    """Build a synthetic knowledge index entry with a large subtask content."""
+def _make_task(index: int, content_size: int = 100) -> dict[str, Any]:
+    """Build a synthetic knowledge index entry for a task file."""
     return {
-        "goal_file": f"goal-{index:04d}-task.json",
-        "main_task": f"Goal {index}",
-        "key_observations": [f"obs-{index}"],
-        "subtasks": [
-            {
-                "filename": f"subtask-{index}.txt",
-                "name": f"Subtask {index}",
-                "content": "x" * content_size,
-            }
-        ],
+        "filename": f"subtask-{index}.txt",
+        "name": f"Subtask {index}",
+        "content": "x" * content_size,
     }
 
 
@@ -35,11 +28,11 @@ class TestFindRelevantKnowledgeTruncation:
     """Verify that an oversized knowledge index is truncated before the API call."""
 
     def test_truncates_large_index(self, capsys: pytest.CaptureFixture[str]) -> None:
-        # Each goal produces roughly content_size + overhead chars.
-        # Create enough goals to exceed the budget.
-        content_per_goal = 100_000
-        num_goals = (_MAX_KNOWLEDGE_CHARS // content_per_goal) + 5
-        knowledge_index = [_make_goal(i, content_per_goal) for i in range(num_goals)]
+        # Each task file produces roughly content_size + overhead chars.
+        # Create enough task files to exceed the budget.
+        content_per_task = 100_000
+        num_tasks = (_MAX_KNOWLEDGE_CHARS // content_per_task) + 5
+        knowledge_index = [_make_task(i, content_per_task) for i in range(num_tasks)]
 
         client = MagicMock()
         client.messages.create.return_value = make_llm_response(
@@ -65,13 +58,13 @@ class TestFindRelevantKnowledgeTruncation:
         # A truncation warning should be printed.
         captured = capsys.readouterr()
         assert "knowledge index truncated" in captured.out
-        assert f"to fit token limit" in captured.out
+        assert "task file(s) to fit token limit" in captured.out
 
     def test_no_truncation_when_within_budget(
         self, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Small indexes should pass through without truncation."""
-        knowledge_index = [_make_goal(i, 100) for i in range(3)]
+        knowledge_index = [_make_task(i, 100) for i in range(3)]
 
         client = MagicMock()
         client.messages.create.return_value = make_llm_response(

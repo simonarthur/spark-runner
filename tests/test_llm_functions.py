@@ -67,12 +67,7 @@ class TestFindRelevantKnowledge:
             "coverage_notes": "needs search",
         })
         mock_summary_client.messages.create.return_value = make_llm_response(response_json)
-        index = [{
-            "goal_file": "g.json",
-            "main_task": "test",
-            "key_observations": [],
-            "subtasks": [{"filename": "login.txt", "name": "Login", "content": "did login"}],
-        }]
+        index = [{"filename": "login.txt", "name": "Login", "content": "did login"}]
         result = spark_runner.find_relevant_knowledge("new task", index)
         assert len(result["reusable_subtasks"]) == 1
         assert result["relevant_observations"] == ["UI is slow"]
@@ -82,13 +77,13 @@ class TestFindRelevantKnowledge:
         mock_summary_client.messages.create.return_value = make_llm_response(
             f"```json\n{inner}\n```"
         )
-        index = [{"goal_file": "g.json", "main_task": "t", "key_observations": [], "subtasks": []}]
+        index = [{"filename": "step.txt", "name": "Step", "content": "did step"}]
         result = spark_runner.find_relevant_knowledge("q", index)
         assert result["relevant_observations"] == ["x"]
 
     def test_parse_error_fallback(self, mock_summary_client: MagicMock) -> None:
         mock_summary_client.messages.create.return_value = make_llm_response("not json at all")
-        index = [{"goal_file": "g.json", "main_task": "t", "key_observations": [], "subtasks": []}]
+        index = [{"filename": "step.txt", "name": "Step", "content": "did step"}]
         result = spark_runner.find_relevant_knowledge("q", index)
         assert result == {"reusable_subtasks": [], "relevant_observations": [], "coverage_notes": ""}
 

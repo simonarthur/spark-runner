@@ -9,7 +9,6 @@ from typing import Any, Callable
 
 import anthropic
 
-from spark_runner.classification import _observation_text
 from spark_runner.llm_trace import save_llm_conversation
 from spark_runner.models import ModelConfig
 
@@ -19,57 +18,33 @@ _MAX_KNOWLEDGE_CHARS: int = 500_000
 
 
 def load_knowledge_index(
-    goal_summaries_dir: Path,
     tasks_dir: Path,
     restore_fn: Callable[[str], str],
 ) -> list[dict[str, Any]]:
-    """Read all goal summaries and their referenced task files into a knowledge index.
+    """Read all ``.txt`` task files into a flat knowledge index.
 
     Args:
-        goal_summaries_dir: Directory containing ``*-task.json`` goal summary files.
-        tasks_dir: Directory containing subtask ``.txt`` files.
+        tasks_dir: Directory containing task ``.txt`` files.
         restore_fn: Function to restore placeholders in stored text.
 
     Returns:
-        A list of dicts representing prior goals with subtask contents loaded.
+        A flat list of dicts with ``filename``, ``name``, and ``content`` keys.
     """
     index: list[dict[str, Any]] = []
 
-    for goal_file in sorted(goal_summaries_dir.glob("*-task.json")):
+    for task_file in sorted(tasks_dir.glob("*.txt")):
         try:
-            data: dict[str, Any] = json.loads(restore_fn(goal_file.read_text()))
-        except (json.JSONDecodeError, OSError) as e:
-            print(f"  Warning: skipping malformed goal file {goal_file.name}: {e}")
+            content: str = restore_fn(task_file.read_text())
+        except OSError as e:
+            print(f"  Warning: could not read {task_file}: {e}")
             continue
+        name: str = task_file.stem.replace("-", " ").title()
+        index.append({
+            "filename": task_file.name,
+            "name": name,
+            "content": content,
+        })
 
-        entry: dict[str, Any] = {
-            "goal_file": goal_file.name,
-            "main_task": data.get("main_task", ""),
-            "key_observations": data.get("key_observations", []),
-            "subtasks": [],
-        }
-
-        for subtask_entry in data.get("subtasks", []):
-            if not isinstance(subtask_entry, dict):
-                continue
-            filename: str = subtask_entry.get("filename", "")
-            subtask_path: Path = tasks_dir / filename
-            if not subtask_path.exists():
-                print(f"  Warning: subtask file not found {subtask_path}, skipping")
-                continue
-            try:
-                content: str = restore_fn(subtask_path.read_text())
-            except OSError as e:
-                print(f"  Warning: could not read {subtask_path}: {e}")
-                continue
-            name: str = subtask_path.stem.replace("-", " ").title()
-            entry["subtasks"].append({
-                "filename": filename,
-                "name": name,
-                "content": content,
-            })
-
-        index.append(entry)
     return index
 
 
@@ -97,33 +72,19 @@ def find_relevant_knowledge(
     if not knowledge_index:
         return {"reusable_subtasks": [], "relevant_observations": [], "coverage_notes": ""}
 
-    total_subtasks: int = sum(len(g["subtasks"]) for g in knowledge_index)
-    total_observations: int = sum(len(g["key_observations"]) for g in knowledge_index)
-    print(f"  Searching {len(knowledge_index)} goal(s) with {total_subtasks} subtask(s) and {total_observations} observation(s)")
-    for i, goal in enumerate(knowledge_index, 1):
-        subtask_names: str = ", ".join(st["name"] for st in goal["subtasks"]) or "(none)"
-        print(f"    Goal {i}: {goal['goal_file']}")
-        print(f"      Task: {goal['main_task']}")
-        print(f"      Subtasks: {subtask_names}")
-        print(f"      Observations: {len(goal['key_observations'])}")
+    print(f"  Searching {len(knowledge_index)} task file(s)")
+    for i, task_entry in enumerate(knowledge_index, 1):
+        print(f"    {i}. {task_entry['filename']} ({task_entry['name']})")
 
     index_text_parts: list[str] = []
-    for i, goal in enumerate(knowledge_index):
-        parts: list[str] = [f"Goal {i + 1}: {goal['goal_file']}"]
-        parts.append(f"  Main task: {goal['main_task']}")
-        if goal["key_observations"]:
-            parts.append("  Observations:")
-            for obs in goal["key_observations"]:
-                parts.append(f"    - {_observation_text(obs)}")
-        if goal["subtasks"]:
-            parts.append("  Subtasks:")
-            for st in goal["subtasks"]:
-                parts.append(f"    [{st['filename']}] {st['name']}:")
-                parts.append(f"      {st['content']}")
+    for i, task_entry in enumerate(knowledge_index):
+        parts: list[str] = [f"Task file {i + 1}: {task_entry['filename']}"]
+        parts.append(f"  Name: {task_entry['name']}")
+        parts.append(f"  Content:\n    {task_entry['content']}")
         index_text_parts.append("\n".join(parts))
 
     # Truncate if the combined index would exceed the character budget.
-    total_goals: int = len(index_text_parts)
+    total_files: int = len(index_text_parts)
     kept_parts: list[str] = []
     char_count: int = 0
     for part in index_text_parts:
@@ -134,40 +95,40 @@ def find_relevant_knowledge(
         kept_parts.append(part)
         char_count += added
 
-    if len(kept_parts) < total_goals:
+    if len(kept_parts) < total_files:
         print(
-            f"  Warning: knowledge index truncated from {total_goals} to"
-            f" {len(kept_parts)} goal(s) to fit token limit"
+            f"  Warning: knowledge index truncated from {total_files} to"
+            f" {len(kept_parts)} task file(s) to fit token limit"
         )
 
     index_text: str = "\n\n".join(kept_parts)
     print(f"  Sending {len(index_text)} chars to LLM for knowledge matching...")
 
-    messages: list[dict[str, Any]] = [{"role": "user", "content": f"""You are analyzing a knowledge base of prior browser automation runs to find reusable components for a new task.
+    messages: list[dict[str, Any]] = [{"role": "user", "content": f"""You are analyzing a collection of prior browser automation task files to find reusable components for a new task.
 
 New task prompt:
 {prompt}
 
-Existing goals and their subtasks:
+Existing task files:
 {index_text}
 
-Analyze each existing subtask's CONTENT (not just its name) and determine:
-1. Which subtasks can be directly reused for the new task (the steps described in the content must actually match what the new task needs)
-2. Which observations from prior goals are relevant to the new task
-3. What the new task needs that isn't covered by existing knowledge
+Analyze each task file's CONTENT and determine:
+1. Which task files can be directly reused for the new task (the steps described in the content must actually match what the new task needs)
+2. What relevant observations can be extracted from the task file content (UI patterns, workarounds, timing notes, form quirks)
+3. What the new task needs that isn't covered by existing task files
 
 Return ONLY valid JSON:
 {{
     "reusable_subtasks": [
-        {{"filename": "exact-filename.txt", "phase_name": "Phase Name", "reason": "Why this subtask is reusable"}}
+        {{"filename": "exact-filename.txt", "phase_name": "Phase Name", "reason": "Why this task file is reusable"}}
     ],
     "relevant_observations": ["observation string 1", "observation string 2"],
-    "coverage_notes": "What the new task needs that isn't covered by existing subtasks"
+    "coverage_notes": "What the new task needs that isn't covered by existing task files"
 }}
 
 IMPORTANT:
-- Only include subtasks whose content genuinely matches what the new task needs — don't match on name alone.
-- For observations, include any that would help the new task succeed (UI patterns, timing, form quirks, etc).
+- Only include task files whose content genuinely matches what the new task needs — don't match on name alone.
+- For observations, extract any useful insights from the task file content that would help the new task succeed.
 - If nothing is reusable, return empty arrays."""}]
     response: anthropic.types.Message = client.messages.create(
         model=model_config.model,

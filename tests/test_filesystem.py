@@ -66,94 +66,72 @@ class TestLogProblem:
 # ── load_knowledge_index ─────────────────────────────────────────────────
 
 class TestLoadKnowledgeIndex:
-    def test_empty_dir(self, fake_goal_summaries_dir: Path) -> None:
+    def test_empty_dir(self, fake_tasks_dir: Path) -> None:
         assert spark_runner.load_knowledge_index() == []
 
-    def test_loads_goal_with_subtasks(
-        self, fake_tasks_dir: Path, fake_goal_summaries_dir: Path
-    ) -> None:
-        # Create a subtask file
+    def test_loads_multiple_txt_files(self, fake_tasks_dir: Path) -> None:
         (fake_tasks_dir / "login.txt").write_text("Logged in OK")
-        # Create a goal summary referencing it
-        goal: dict[str, Any] = {
-            "main_task": "Test login",
-            "key_observations": ["obs1"],
-            "subtasks": [{"filename": "login.txt"}],
-        }
-        (fake_goal_summaries_dir / "login-test-task.json").write_text(json.dumps(goal))
+        (fake_tasks_dir / "search.txt").write_text("Searched items")
+
+        index = spark_runner.load_knowledge_index()
+        assert len(index) == 2
+        filenames = [entry["filename"] for entry in index]
+        assert "login.txt" in filenames
+        assert "search.txt" in filenames
+
+    def test_ignores_non_txt_files(self, fake_tasks_dir: Path) -> None:
+        (fake_tasks_dir / "login.txt").write_text("Logged in OK")
+        (fake_tasks_dir / "notes.json").write_text('{"key": "value"}')
+        (fake_tasks_dir / "readme.md").write_text("# Readme")
 
         index = spark_runner.load_knowledge_index()
         assert len(index) == 1
-        assert index[0]["main_task"] == "Test login"
-        assert len(index[0]["subtasks"]) == 1
-        assert index[0]["subtasks"][0]["content"] == "Logged in OK"
-        assert index[0]["subtasks"][0]["name"] == "Login"
+        assert index[0]["filename"] == "login.txt"
 
-    def test_skips_malformed_json(self, fake_goal_summaries_dir: Path) -> None:
-        (fake_goal_summaries_dir / "bad-task.json").write_text("not json{{{")
+    def test_name_derived_from_filename(self, fake_tasks_dir: Path) -> None:
+        (fake_tasks_dir / "fill-login-form.txt").write_text("content")
+
         index = spark_runner.load_knowledge_index()
-        assert index == []
+        assert index[0]["name"] == "Fill Login Form"
 
-    def test_skips_missing_subtask_file(
-        self, fake_tasks_dir: Path, fake_goal_summaries_dir: Path
-    ) -> None:
-        goal: dict[str, Any] = {
-            "main_task": "test",
-            "key_observations": [],
-            "subtasks": [{"filename": "missing.txt"}],
-        }
-        (fake_goal_summaries_dir / "test-task.json").write_text(json.dumps(goal))
+    def test_content_loaded(self, fake_tasks_dir: Path) -> None:
+        (fake_tasks_dir / "login.txt").write_text("Step 1: Navigate to login page")
+
         index = spark_runner.load_knowledge_index()
-        assert len(index) == 1
-        assert index[0]["subtasks"] == []
+        assert index[0]["content"] == "Step 1: Navigate to login page"
 
-    def test_skips_non_dict_subtask_entries(
-        self, fake_tasks_dir: Path, fake_goal_summaries_dir: Path
-    ) -> None:
-        (fake_tasks_dir / "step.txt").write_text("Do the thing")
-        goal: dict[str, Any] = {
-            "main_task": "test",
-            "key_observations": [],
-            "subtasks": ["step.txt", {"filename": "step.txt"}],
-        }
-        (fake_goal_summaries_dir / "mixed-task.json").write_text(json.dumps(goal))
+    def test_restore_fn_applied_to_content(self, fake_tasks_dir: Path) -> None:
+        (fake_tasks_dir / "step.txt").write_text("Visit {BASE_URL}/page")
+
         index = spark_runner.load_knowledge_index()
-        assert len(index) == 1
-        # The plain string entry is skipped; only the dict entry is loaded
-        assert len(index[0]["subtasks"]) == 1
-        assert index[0]["subtasks"][0]["filename"] == "step.txt"
+        assert "https://test.example.com/page" in index[0]["content"]
 
-    def test_preserves_credential_placeholders(
-        self, fake_tasks_dir: Path, fake_goal_summaries_dir: Path
-    ) -> None:
+    def test_preserves_credential_placeholders(self, fake_tasks_dir: Path) -> None:
         """Credential placeholders like {USER_EMAIL} must survive into the knowledge index."""
         (fake_tasks_dir / "step.txt").write_text("Login as {USER_EMAIL} with {USER_PASSWORD}")
-        goal: dict[str, Any] = {
-            "main_task": "test",
-            "key_observations": [],
-            "subtasks": [{"filename": "step.txt"}],
-        }
-        (fake_goal_summaries_dir / "cred-task.json").write_text(json.dumps(goal))
+
         index = spark_runner.load_knowledge_index()
-        content: str = index[0]["subtasks"][0]["content"]
+        content: str = index[0]["content"]
         assert "{USER_EMAIL}" in content
         assert "{USER_PASSWORD}" in content
-        # Real credentials must NOT appear
         assert "test@example.com" not in content
         assert "test-password-123" not in content
 
-    def test_restores_placeholders(
-        self, fake_tasks_dir: Path, fake_goal_summaries_dir: Path
+    def test_skips_unreadable_files(
+        self, fake_tasks_dir: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        (fake_tasks_dir / "step.txt").write_text("Visit {BASE_URL}/page")
-        goal: dict[str, Any] = {
-            "main_task": "go to {BASE_URL}",
-            "key_observations": [],
-            "subtasks": [{"filename": "step.txt"}],
-        }
-        (fake_goal_summaries_dir / "step-task.json").write_text(json.dumps(goal))
+        task_file = fake_tasks_dir / "broken.txt"
+        task_file.write_text("content")
+        task_file.chmod(0o000)
+
         index = spark_runner.load_knowledge_index()
-        assert "https://test.example.com/page" in index[0]["subtasks"][0]["content"]
+        assert index == []
+
+        captured = capsys.readouterr()
+        assert "Warning: could not read" in captured.out
+
+        # Restore permissions for cleanup
+        task_file.chmod(0o644)
 
 
 # ── load_goal_summary ────────────────────────────────────────────────────

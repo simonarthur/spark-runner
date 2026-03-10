@@ -141,8 +141,8 @@ def _observation_text(obs: str | dict[str, str]) -> str:
 
 
 def load_knowledge_index() -> list[dict[str, Any]]:
-    """Read all goal summaries and their referenced task files into a knowledge index."""
-    return _kn.load_knowledge_index(GOAL_SUMMARIES_DIR, TASKS_DIR, _restore_host_only)
+    """Read all task files into a flat knowledge index."""
+    return _kn.load_knowledge_index(TASKS_DIR, _restore_host_only)
 
 
 def find_relevant_knowledge(

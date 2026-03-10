@@ -186,11 +186,11 @@ async def run_single(
     # --- Load knowledge index ---
     knowledge_match: dict[str, Any] | None = None
     if config.knowledge_reuse:
-        print("Loading knowledge from prior goals...")
+        print("Loading knowledge from prior task files...")
         knowledge_index: list[dict[str, Any]] = load_knowledge_index(
-            config.goal_summaries_dir, config.tasks_dir, host_restore_fn
+            config.tasks_dir, host_restore_fn
         )
-        print(f"  Loaded {len(knowledge_index)} prior goal(s)")
+        print(f"  Loaded {len(knowledge_index)} prior task file(s)")
     else:
         knowledge_index = []
         print("Knowledge reuse disabled")
@@ -214,7 +214,16 @@ async def run_single(
         )
         print(f"Task: {prompt}")
         print(f"Task name: {task_name}")
-        km_index = [g for g in knowledge_index if g["goal_file"] != goal_path.name]
+        try:
+            _goal_data: dict[str, Any] = json.loads(goal_path.read_text())
+            _own_filenames: set[str] = {
+                st.get("filename", "")
+                for st in _goal_data.get("subtasks", [])
+                if isinstance(st, dict)
+            }
+        except (json.JSONDecodeError, OSError):
+            _own_filenames = set()
+        km_index = [t for t in knowledge_index if t["filename"] not in _own_filenames]
     else:
         prompt = task.prompt or ""
         if not prompt:
@@ -284,7 +293,7 @@ async def run_single(
 
     # --- Knowledge matching (run_dir available) ---
     if km_index:
-        print("\nFinding relevant knowledge from prior goals...")
+        print("\nFinding relevant knowledge from prior task files...")
         knowledge_match = find_relevant_knowledge(
             prompt, km_index, client,
             config.get_model("knowledge_matching"),
@@ -300,7 +309,7 @@ async def run_single(
             "conversation_file": "llm_knowledge_matching.json",
         })
     elif knowledge_index:
-        print("  No other goals to learn from")
+        print("  No other task files to learn from")
 
     # --- Decomposition (run_dir available) ---
     if not phases or config.regenerate_tasks:
