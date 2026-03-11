@@ -35,7 +35,7 @@ from spark_runner.observations import _extract_and_log_observations, merge_obser
 from spark_runner.placeholders import restore_from_storage, restore_host_only, sanitize_for_storage
 from spark_runner.report import generate_report
 from spark_runner.results import write_run_metadata
-from spark_runner.storage import make_run_dir, phase_name_to_slug, safe_write_path
+from spark_runner.storage import make_run_dir, phase_name_to_slug, safe_write_path, write_with_history
 from spark_runner.summarization import (
     generate_task_report,
     summarize_phase,
@@ -457,10 +457,10 @@ async def run_single(
             now_str: str = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
             dated_summary: str = f"<!-- updated: {now_str} -->\n{sanitize_fn(summary)}"
             if goal_path and config.update_tasks:
-                subtask_path.write_text(dated_summary)
+                write_with_history(subtask_path, dated_summary)
             elif config.update_tasks:
                 subtask_path = safe_write_path(subtask_path)
-                subtask_path.write_text(dated_summary)
+                write_with_history(subtask_path, dated_summary)
             log_event(event_log, f"Subtask summary saved to {subtask_path}")
 
             phase_record: dict[str, str] = {
@@ -577,7 +577,7 @@ async def run_single(
                 existing_data["key_observations"] = classified_obs
                 existing_data["subtasks"] = report["subtasks"]
                 existing_data["updated_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-                goal_path.write_text(sanitize_fn(json.dumps(existing_data, indent=2)))
+                write_with_history(goal_path, sanitize_fn(json.dumps(existing_data, indent=2)))
                 num_errors: int = sum(1 for o in classified_obs if o["severity"] == "error")
                 num_warnings: int = len(classified_obs) - num_errors
                 log_event(event_log, f"Updated goal summary: {goal_path} ({num_errors} errors, {num_warnings} warnings)")
@@ -614,7 +614,7 @@ async def run_single(
                 report["created_at"] = now_iso
                 report["updated_at"] = now_iso
                 report_path = safe_write_path(report_path)
-                report_path.write_text(sanitize_fn(json.dumps(report, indent=2)))
+                write_with_history(report_path, sanitize_fn(json.dumps(report, indent=2)))
                 num_errors = sum(1 for o in classified_obs if o["severity"] == "error")
                 num_warnings = len(classified_obs) - num_errors
                 log_event(event_log, f"Task report saved to {report_path} ({num_errors} errors, {num_warnings} warnings)")

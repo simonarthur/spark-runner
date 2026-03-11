@@ -9,6 +9,48 @@ from pathlib import Path
 from typing import Any
 
 
+def _history_stamp(dt: datetime) -> str:
+    """Format a datetime as a compact timestamp for history filenames."""
+    return dt.strftime("%Y%m%d-%H%M%S")
+
+
+def _has_history(path: Path) -> bool:
+    """Return True if *path* already has at least one timestamped history sibling."""
+    stem = path.stem
+    suffix = path.suffix
+    # History files look like: stem-YYYYMMDD-HHMMSS.ext (possibly with -N suffix from safe_write_path)
+    pattern = f"{stem}-[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]-[0-9][0-9][0-9][0-9][0-9][0-9]*{suffix}"
+    return any(path.parent.glob(pattern))
+
+
+def write_with_history(path: Path, content: str) -> Path:
+    """Write *content* to *path* and create a timestamped history copy.
+
+    If the file already exists and has no prior history backup, the current
+    file is first copied to ``<stem>-<mtime>.<ext>`` to preserve it.
+
+    Then the new content is written to *path* **and** to a timestamped copy
+    using the current time.
+
+    Returns:
+        The history copy path that was created for the new content.
+    """
+    if path.exists() and not _has_history(path):
+        # Bootstrap: preserve the existing file using its last-modified time
+        mtime = datetime.fromtimestamp(path.stat().st_mtime)
+        bootstrap_name = f"{path.stem}-{_history_stamp(mtime)}{path.suffix}"
+        bootstrap_path = path.parent / bootstrap_name
+        bootstrap_path.write_text(path.read_text())
+
+    path.write_text(content)
+
+    now_stamp = _history_stamp(datetime.now())
+    history_name = f"{path.stem}-{now_stamp}{path.suffix}"
+    history_path = safe_write_path(path.parent / history_name)
+    history_path.write_text(content)
+    return history_path
+
+
 def safe_write_path(path: Path) -> Path:
     """Return a non-conflicting file path, appending ``-2``, ``-3``, etc. if needed.
 

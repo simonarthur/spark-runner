@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from pathlib import Path
 from typing import Any
@@ -10,6 +11,7 @@ from typing import Any
 import pytest
 
 import spark_runner
+from spark_runner.storage import write_with_history, _has_history
 
 
 # ── safe_write_path ──────────────────────────────────────────────────────
@@ -30,6 +32,87 @@ class TestSafeWritePath:
             (tmp_path / f"report{suffix}.json").write_text("x")
         result = spark_runner.safe_write_path(tmp_path / "report.json")
         assert result == tmp_path / "report-4.json"
+
+
+# ── write_with_history ───────────────────────────────────────────────────
+
+
+class TestWriteWithHistory:
+    def test_new_file_creates_file_and_history(self, tmp_path: Path) -> None:
+        p = tmp_path / "login-task.json"
+        write_with_history(p, '{"v": 1}')
+        assert p.read_text() == '{"v": 1}'
+        history = list(tmp_path.glob("login-task-[0-9]*-[0-9]*.json"))
+        assert len(history) == 1
+        assert history[0].read_text() == '{"v": 1}'
+
+    def test_existing_file_bootstraps_old_version(self, tmp_path: Path) -> None:
+        p = tmp_path / "login-task.json"
+        p.write_text('{"v": 0}')
+        # Set a known mtime so we can verify the bootstrap stamp
+        old_time = 1700000000.0  # 2023-11-14
+        os.utime(p, (old_time, old_time))
+
+        write_with_history(p, '{"v": 1}')
+
+        assert p.read_text() == '{"v": 1}'
+        history = sorted(tmp_path.glob("login-task-[0-9]*-[0-9]*.json"))
+        # Should have bootstrap copy + new copy = 2 history files
+        assert len(history) == 2
+        # Bootstrap copy has old content
+        assert history[0].read_text() == '{"v": 0}'
+        # New copy has new content
+        assert history[1].read_text() == '{"v": 1}'
+
+    def test_no_double_bootstrap(self, tmp_path: Path) -> None:
+        p = tmp_path / "login-task.json"
+        p.write_text('{"v": 0}')
+        old_time = 1700000000.0
+        os.utime(p, (old_time, old_time))
+        # First write bootstraps
+        write_with_history(p, '{"v": 1}')
+        # Second write should NOT bootstrap again
+        write_with_history(p, '{"v": 2}')
+
+        assert p.read_text() == '{"v": 2}'
+        history = sorted(tmp_path.glob("login-task-[0-9]*.json"))
+        # bootstrap (old mtime) + first write + second write = 3
+        assert len(history) == 3
+        # Bootstrap copy has the original content
+        assert history[0].read_text() == '{"v": 0}'
+
+    def test_returns_history_path(self, tmp_path: Path) -> None:
+        p = tmp_path / "task.txt"
+        result = write_with_history(p, "content")
+        assert result.exists()
+        assert result.read_text() == "content"
+        assert result != p
+
+    def test_txt_file_history(self, tmp_path: Path) -> None:
+        p = tmp_path / "fill-form.txt"
+        write_with_history(p, "step 1")
+        history = list(tmp_path.glob("fill-form-[0-9]*-[0-9]*.txt"))
+        assert len(history) == 1
+        assert history[0].read_text() == "step 1"
+
+
+class TestHasHistory:
+    def test_no_history(self, tmp_path: Path) -> None:
+        p = tmp_path / "login-task.json"
+        p.write_text("{}")
+        assert _has_history(p) is False
+
+    def test_with_history(self, tmp_path: Path) -> None:
+        p = tmp_path / "login-task.json"
+        p.write_text("{}")
+        (tmp_path / "login-task-20240101-120000.json").write_text("{}")
+        assert _has_history(p) is True
+
+    def test_unrelated_file_not_counted(self, tmp_path: Path) -> None:
+        p = tmp_path / "login-task.json"
+        p.write_text("{}")
+        (tmp_path / "logout-task-20240101-120000.json").write_text("{}")
+        assert _has_history(p) is False
 
 
 # ── log_event ────────────────────────────────────────────────────────────

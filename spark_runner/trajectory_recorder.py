@@ -250,12 +250,12 @@ async def record_and_generate_goal(
     config.tasks_dir.mkdir(parents=True, exist_ok=True)
     config.goal_summaries_dir.mkdir(parents=True, exist_ok=True)
 
-    from spark_runner.storage import phase_name_to_slug, safe_write_path
+    from spark_runner.storage import phase_name_to_slug, safe_write_path, write_with_history
 
     for i, phase in enumerate(phases, 1):
         slug = phase_name_to_slug(phase.get("name", f"phase-{i}"))
         task_path = safe_write_path(config.tasks_dir / f"{slug}.txt")
-        task_path.write_text(phase.get("task", ""))
+        write_with_history(task_path, phase.get("task", ""))
         goal_data["subtasks"].append({
             "subtask": i,
             "filename": task_path.name,
@@ -264,7 +264,7 @@ async def record_and_generate_goal(
 
     goal_path = config.goal_summaries_dir / f"{task_name}-task.json"
     goal_path = safe_write_path(goal_path)
-    goal_path.write_text(json.dumps(goal_data, indent=2))
+    write_with_history(goal_path, json.dumps(goal_data, indent=2))
     print(f"\nGoal saved to: {goal_path}")
 
     return goal_path

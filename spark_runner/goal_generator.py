@@ -12,6 +12,7 @@ from typing import Any
 import anthropic
 
 from spark_runner.models import ModelConfig, SparkConfig
+from spark_runner.storage import write_with_history
 
 
 @dataclass
@@ -222,7 +223,7 @@ Return ONLY valid JSON with this structure:
         # Create filename from feature name
         slug = re.sub(r"[^a-z0-9]+", "-", feature.name.lower()).strip("-")
         goal_path = output_dir / f"{slug}-task.json"
-        goal_path.write_text(json.dumps(goal_data, indent=2))
+        write_with_history(goal_path, json.dumps(goal_data, indent=2))
         goal_paths.append(goal_path)
         print(f"  Generated goal: {goal_path.name}")
 

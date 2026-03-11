@@ -35,6 +35,7 @@ from spark_runner.storage import (
     safe_write_path,
     phase_name_to_slug,
     make_run_dir,
+    write_with_history,
 )
 from spark_runner.log import (
     log_event,

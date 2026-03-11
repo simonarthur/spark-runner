@@ -9,6 +9,7 @@ from typing import Any, Callable
 from spark_runner.classification import _observation_text
 from spark_runner.execution import _REPLAY_PREFIX
 from spark_runner.models import GoalInfo
+from spark_runner.storage import write_with_history
 
 
 def get_last_run_info(
@@ -236,7 +237,7 @@ def classify_existing_goals(
         print(f"  {goal_file.name}: classifying {len(observations)} observations...")
         classified: list[dict[str, str]] = classify_fn(prompt, observations)
         data["key_observations"] = classified
-        goal_file.write_text(json.dumps(data, indent=2))
+        write_with_history(goal_file, json.dumps(data, indent=2))
 
         num_errors: int = sum(1 for o in classified if o["severity"] == "error")
         num_warnings: int = len(classified) - num_errors
