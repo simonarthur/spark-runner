@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from spark_runner.models import CredentialProfile, SparkConfig, TaskSpec
-from spark_runner.orchestrator import _copy_goal_files
+from spark_runner.orchestrator import StatusLine, _copy_goal_files, _format_elapsed
 
 
 @pytest.fixture()
@@ -244,3 +244,57 @@ class TestCopyGoalFiles:
         goal_dir = run_dir / "goal"
         assert (goal_dir / "existing.txt").exists()
         assert not (goal_dir / "missing.txt").exists()
+
+
+class TestFormatElapsed:
+    def test_seconds_only(self) -> None:
+        assert _format_elapsed(5) == "0:05"
+
+    def test_minutes_and_seconds(self) -> None:
+        assert _format_elapsed(125) == "2:05"
+
+    def test_hours(self) -> None:
+        assert _format_elapsed(3661) == "1:01:01"
+
+    def test_zero(self) -> None:
+        assert _format_elapsed(0) == "0:00"
+
+
+class TestStatusLine:
+    def test_render_contains_goal_info(self) -> None:
+        sl = StatusLine()
+        sl.set_goal("login", 1, 3)
+        rendered = sl._render()
+        assert "Goal: login (1/3)" in rendered
+        assert "Goal Time:" in rendered
+        assert "Total Time:" in rendered
+
+    def test_set_goal_resets_goal_timer(self) -> None:
+        sl = StatusLine()
+        sl.set_goal("login", 1, 2)
+        first_render = sl._render()
+        sl.set_goal("logout", 2, 2)
+        second_render = sl._render()
+        assert "Goal: login" in first_render
+        assert "Goal: logout (2/2)" in second_render
+
+    @pytest.mark.asyncio
+    async def test_start_and_stop(self) -> None:
+        sl = StatusLine()
+        sl.set_goal("test", 1, 1)
+        await sl.start()
+        assert sl._task is not None
+        assert not sl._task.done()
+        await sl.stop()
+        assert sl._task is None
+
+    @pytest.mark.asyncio
+    async def test_stop_without_start(self) -> None:
+        sl = StatusLine()
+        await sl.stop()  # Should not raise
+
+    def test_clear_resets_width(self) -> None:
+        sl = StatusLine()
+        sl._last_width = 50
+        sl.clear()
+        assert sl._last_width == 0

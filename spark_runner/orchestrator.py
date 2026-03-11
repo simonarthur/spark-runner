@@ -5,7 +5,9 @@ from __future__ import annotations
 import asyncio
 import json
 import shutil
+import sys
 import tempfile
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -150,11 +152,92 @@ def _copy_goal_files(
             shutil.copy2(src, goal_dir / filename)
 
 
+def _format_elapsed(seconds: float) -> str:
+    """Format elapsed seconds as ``MM:SS`` or ``H:MM:SS``."""
+    m, s = divmod(int(seconds), 60)
+    h, m = divmod(m, 60)
+    if h:
+        return f"{h}:{m:02d}:{s:02d}"
+    return f"{m}:{s:02d}"
+
+
+class StatusLine:
+    """Async helper that prints a periodically-refreshed status line to stderr.
+
+    The line is cleared before each normal ``print()`` so it doesn't interfere
+    with regular output.
+    """
+
+    def __init__(self) -> None:
+        self._total_start: float = time.monotonic()
+        self._goal_start: float = self._total_start
+        self._goal_name: str = ""
+        self._goal_index: int = 0
+        self._goal_total: int = 0
+        self._task: asyncio.Task[None] | None = None
+        self._last_width: int = 0
+
+    def set_goal(self, name: str, index: int, total: int) -> None:
+        """Update the current goal being run."""
+        self._goal_name = name
+        self._goal_index = index
+        self._goal_total = total
+        self._goal_start = time.monotonic()
+
+    def _render(self) -> str:
+        now = time.monotonic()
+        goal_elapsed = _format_elapsed(now - self._goal_start)
+        total_elapsed = _format_elapsed(now - self._total_start)
+        return (
+            f"Goal: {self._goal_name} ({self._goal_index}/{self._goal_total})"
+            f"  Goal Time: {goal_elapsed}"
+            f"  Total Time: {total_elapsed}"
+        )
+
+    def _write(self) -> None:
+        line = self._render()
+        # Pad to overwrite previous content, then carriage-return
+        padded = line.ljust(self._last_width)
+        self._last_width = len(line)
+        sys.stderr.write(f"\r{padded}")
+        sys.stderr.flush()
+
+    def clear(self) -> None:
+        """Erase the status line."""
+        if self._last_width:
+            sys.stderr.write("\r" + " " * self._last_width + "\r")
+            sys.stderr.flush()
+            self._last_width = 0
+
+    async def _loop(self) -> None:
+        try:
+            while True:
+                self._write()
+                await asyncio.sleep(1)
+        except asyncio.CancelledError:
+            self.clear()
+
+    async def start(self) -> None:
+        """Begin the background refresh loop."""
+        self._task = asyncio.create_task(self._loop())
+
+    async def stop(self) -> None:
+        """Cancel the refresh loop and clear the line."""
+        if self._task is not None:
+            self._task.cancel()
+            try:
+                await self._task
+            except asyncio.CancelledError:
+                pass
+            self._task = None
+
+
 async def run_single(
     task: TaskSpec,
     config: SparkConfig,
     client: anthropic.Anthropic | None = None,
     browser: Browser | None = None,
+    status_line: StatusLine | None = None,
 ) -> RunResult:
     """Run a single task (prompt or goal file) and return the result.
 
@@ -163,6 +246,7 @@ async def run_single(
         config: Configuration.
         client: Optional pre-configured Anthropic client.
         browser: Optional pre-configured browser (for shared sessions).
+        status_line: Optional live status display managed by the caller.
 
     Returns:
         A ``RunResult`` with all phase outcomes and screenshots.
@@ -246,6 +330,13 @@ async def run_single(
         print(f"Task name: {task_name}")
         phases = []
         km_index = knowledge_index
+
+    # --- Status line ---
+    own_status = status_line is None
+    if own_status:
+        status_line = StatusLine()
+        status_line.set_goal(task_name, 1, 1)
+        await status_line.start()
 
     # --- Pipeline steps tracking ---
     pipeline_steps: list[dict[str, Any]] = []
@@ -658,6 +749,9 @@ async def run_single(
         except Exception as report_err:
             log_event(event_log, f"WARNING: Could not generate HTML report: {report_err}")
 
+        if own_status:
+            await status_line.stop()
+
         if own_browser:
             if not config.auto_close:
                 input("\nPress Enter to close the browser...")
@@ -695,6 +789,13 @@ async def run_multiple(
     if shared_session:
         browser = _make_browser(headless=config.headless)
 
+    status = StatusLine()
+
+    def _goal_label(t: TaskSpec) -> str:
+        if t.goal_path is not None:
+            return t.goal_path.stem.removesuffix("-task")
+        return (t.prompt or "task")[:40]
+
     try:
         if parallel > 1 and not shared_session:
             # Concurrent execution (each with own browser)
@@ -705,10 +806,14 @@ async def run_multiple(
             results = list(results)
         else:
             # Sequential execution
-            for task in tasks:
-                result = await run_single(task, config, client, browser)
+            await status.start()
+            for i, task in enumerate(tasks, 1):
+                status.set_goal(_goal_label(task), i, len(tasks))
+                result = await run_single(task, config, client, browser, status_line=status)
                 results.append(result)
+            await status.stop()
     finally:
+        await status.stop()
         if shared_session and browser is not None:
             if not config.auto_close:
                 input("\nPress Enter to close the browser...")
