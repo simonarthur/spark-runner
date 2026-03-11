@@ -301,13 +301,16 @@ class TestStatusLine:
         assert sl._last_width == 0
 
     def test_write_uses_scroll_region_on_tty(self) -> None:
-        """When stderr is a TTY, _write should use ANSI cursor positioning."""
+        """When stderr is a TTY, _write should use ANSI cursor positioning with styling."""
         sl = StatusLine()
         sl._is_tty = True
         sl._scroll_region_active = True
         sl._height = 24
         sl.set_goal("login", 1, 1)
-        with patch.object(sys, "stderr") as mock_stderr:
+        with (
+            patch.object(sys, "stderr") as mock_stderr,
+            patch("shutil.get_terminal_size", return_value=MagicMock(lines=24, columns=80)),
+        ):
             mock_stderr.isatty.return_value = True
             sl._write()
             written = "".join(
@@ -318,6 +321,9 @@ class TestStatusLine:
             assert "\033[24;1H" in written
             assert "\033[K" in written
             assert "\033[u" in written
+            # Should have yellow-bg/black-fg styling
+            assert "\033[30;43m" in written
+            assert "\033[0m" in written
 
     def test_write_falls_back_on_non_tty(self) -> None:
         """When stderr is not a TTY, _write should use \\r fallback."""

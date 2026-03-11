@@ -242,12 +242,19 @@ class StatusLine:
             f"  Total Time: {total_elapsed}"
         )
 
+    # ANSI style: black text on yellow background.
+    _STYLE_ON: str = "\033[30;43m"
+    _STYLE_OFF: str = "\033[0m"
+
     def _write(self) -> None:
         line = self._render()
         if self._scroll_region_active:
             # Write to the reserved bottom row without disturbing main output.
+            cols = shutil.get_terminal_size().columns
+            padded = line.ljust(cols)
             sys.stderr.write(
-                f"\033[s\033[{self._height};1H\033[K{line}\033[u"
+                f"\033[s\033[{self._height};1H\033[K"
+                f"{self._STYLE_ON}{padded}{self._STYLE_OFF}\033[u"
             )
             sys.stderr.flush()
         else:
