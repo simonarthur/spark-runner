@@ -162,8 +162,12 @@ class TestRunPhase:
             )
 
         assert success is False
-        assert "Could not save failure screenshot" in event_log.read_text()
+        assert "Could not capture failure screenshot" in event_log.read_text()
+        assert "used fallback" in event_log.read_text()
         assert "Could not save failure screenshot" in problem_log.read_text()
+        # Fallback screenshot should still be saved
+        fallback_path = tmp_path / "screenshots" / "failure_Crash.png"
+        assert fallback_path.exists()
 
     @pytest.mark.asyncio
     async def test_not_done_phase_reports_failure(self, tmp_path: Path) -> None:

@@ -13,6 +13,7 @@ from browser_use.agent.views import AgentHistoryList
 from spark_runner.classification import _observation_text
 from spark_runner.log import log_event, log_problem
 from spark_runner.models import ScreenshotRecord
+from spark_runner.screenshots import _FALLBACK_SCREENSHOT
 from spark_runner.storage import phase_name_to_slug
 from spark_runner.summarization import extract_phase_history
 
@@ -218,23 +219,25 @@ async def run_phase(
         log_event(event_log, f"PHASE FAILED: {name}\n{final_lines}")
         log_problem(problem_log, f"PHASE FAILED: {name}\n{final_lines}")
         # Take an explicit failure screenshot of the current state
+        failure_name: str = f"failure_{name.replace(' ', '_')}.png"
+        screenshots_dir = run_dir / "screenshots"
+        screenshots_dir.mkdir(exist_ok=True)
+        screenshot_path = screenshots_dir / failure_name
         try:
-            failure_name: str = f"failure_{name.replace(' ', '_')}.png"
-            screenshot_path: str = str(run_dir / "screenshots" / failure_name)
-            (run_dir / "screenshots").mkdir(exist_ok=True)
             page = await browser.get_current_page()
-            await page.screenshot(screenshot_path)
+            await page.screenshot(str(screenshot_path))
             log_event(event_log, f"Failure screenshot saved to {screenshot_path}")
-            phase_screenshots.append(ScreenshotRecord(
-                path=Path(screenshot_path),
-                event_type="phase_end",
-                phase_name=name,
-                error_message=final or "Phase failed",
-                timestamp=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-            ))
         except Exception as e:
-            log_event(event_log, f"Could not save failure screenshot: {e}")
+            shutil.copy2(str(_FALLBACK_SCREENSHOT), str(screenshot_path))
+            log_event(event_log, f"Could not capture failure screenshot ({e}), used fallback")
             log_problem(problem_log, f"Could not save failure screenshot for {name}: {e}")
+        phase_screenshots.append(ScreenshotRecord(
+            path=screenshot_path,
+            event_type="phase_end",
+            phase_name=name,
+            error_message=final or "Phase failed",
+            timestamp=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        ))
 
     for h in result.history:
         for r in h.result:

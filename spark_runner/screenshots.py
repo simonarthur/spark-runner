@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import shutil
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from spark_runner.models import ScreenshotRecord
+
+_FALLBACK_SCREENSHOT: Path = Path(__file__).parent / "assets" / "fallback_screenshot.png"
 
 
 def make_screenshots_dir(run_dir: Path) -> Path:
@@ -43,16 +46,16 @@ async def capture_screenshot(
     screenshot_path = screenshots_dir / filename
     try:
         await page.screenshot(str(screenshot_path))
-        return ScreenshotRecord(
-            path=screenshot_path,
-            event_type=event_type,
-            phase_name=phase_name,
-            step_number=step_number,
-            error_message=error_message,
-            timestamp=datetime.now().isoformat(),
-        )
     except Exception:
-        return None
+        shutil.copy2(str(_FALLBACK_SCREENSHOT), str(screenshot_path))
+    return ScreenshotRecord(
+        path=screenshot_path,
+        event_type=event_type,
+        phase_name=phase_name,
+        step_number=step_number,
+        error_message=error_message,
+        timestamp=datetime.now().isoformat(),
+    )
 
 
 async def capture_phase_end_screenshot(

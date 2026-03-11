@@ -9,9 +9,23 @@ import pytest
 
 from spark_runner.models import ScreenshotRecord
 from spark_runner.screenshots import (
+    _FALLBACK_SCREENSHOT,
     capture_screenshot,
     make_screenshots_dir,
 )
+
+
+# ── fallback screenshot ──────────────────────────────────────────────────
+
+
+class TestFallbackScreenshot:
+    def test_fallback_asset_exists(self) -> None:
+        assert _FALLBACK_SCREENSHOT.exists()
+        assert _FALLBACK_SCREENSHOT.stat().st_size > 0
+
+    def test_fallback_is_png(self) -> None:
+        header = _FALLBACK_SCREENSHOT.read_bytes()[:8]
+        assert header[:4] == b"\x89PNG"
 
 
 # ── make_screenshots_dir ─────────────────────────────────────────────────
@@ -94,7 +108,7 @@ class TestCaptureScreenshot:
         page.screenshot.assert_called_once_with(expected_path)
 
     @pytest.mark.asyncio
-    async def test_failure_returns_none(self, tmp_path: Path) -> None:
+    async def test_failure_uses_fallback_screenshot(self, tmp_path: Path) -> None:
         page = AsyncMock()
         page.screenshot = AsyncMock(side_effect=RuntimeError("browser crashed"))
 
@@ -103,9 +117,16 @@ class TestCaptureScreenshot:
             run_dir=tmp_path,
             filename="fail.png",
             event_type="error",
+            phase_name="Login",
         )
 
-        assert result is None
+        assert result is not None
+        assert isinstance(result, ScreenshotRecord)
+        assert result.event_type == "error"
+        assert result.phase_name == "Login"
+        # The fallback image should have been copied to the expected path
+        assert result.path.exists()
+        assert result.path.read_bytes() == _FALLBACK_SCREENSHOT.read_bytes()
 
     @pytest.mark.asyncio
     async def test_includes_step_number(self, tmp_path: Path) -> None:
@@ -159,7 +180,7 @@ class TestCaptureScreenshot:
 
     @pytest.mark.asyncio
     async def test_page_exception_type_does_not_matter(self, tmp_path: Path) -> None:
-        """Any exception from page.screenshot should result in None, not a re-raise."""
+        """Any exception from page.screenshot should use fallback, not re-raise."""
         page = AsyncMock()
         page.screenshot = AsyncMock(side_effect=TimeoutError("timed out"))
 
@@ -170,4 +191,6 @@ class TestCaptureScreenshot:
             event_type="error",
         )
 
-        assert result is None
+        assert result is not None
+        assert result.path.exists()
+        assert result.path.read_bytes() == _FALLBACK_SCREENSHOT.read_bytes()

@@ -36,6 +36,7 @@ from spark_runner.models import (
 from spark_runner.observations import _extract_and_log_observations, merge_observations
 from spark_runner.placeholders import restore_from_storage, restore_host_only, sanitize_for_storage
 from spark_runner.report import generate_report
+from spark_runner.screenshots import _FALLBACK_SCREENSHOT
 from spark_runner.results import write_run_metadata
 from spark_runner.storage import make_run_dir, phase_name_to_slug, safe_write_path, write_with_history
 from spark_runner.summarization import (
@@ -604,12 +605,15 @@ async def run_single(
     except Exception as e:
         log_event(event_log, f"UNEXPECTED ERROR: {e}")
         log_problem(problem_log, f"UNEXPECTED ERROR: {e}")
+        unexpected_screenshot: Path = run_dir / "screenshots" / "failure_unexpected.png"
+        (run_dir / "screenshots").mkdir(exist_ok=True)
         try:
             page = await browser.get_current_page()
-            unexpected_screenshot: str = str(run_dir / "failure_unexpected.png")
-            await page.screenshot(unexpected_screenshot)
+            await page.screenshot(str(unexpected_screenshot))
             log_event(event_log, f"Failure screenshot saved to {unexpected_screenshot}")
         except Exception as screenshot_err:
+            shutil.copy2(str(_FALLBACK_SCREENSHOT), str(unexpected_screenshot))
+            log_event(event_log, f"Could not capture screenshot ({screenshot_err}), used fallback")
             log_problem(problem_log, f"Could not save unexpected-error screenshot: {screenshot_err}")
     finally:
         detach_agent_log_handler(agent_log_handler)
