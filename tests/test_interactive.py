@@ -559,6 +559,165 @@ class TestInteractiveLoop:
         assert history.filename == str(config.data_dir / ".repl_history")
 
 
+# ── hint commands ────────────────────────────────────────────────────
+
+
+class TestHintCommands:
+    def test_hint_command_saves_hint(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        config = _make_config(tmp_path)
+        assert config.goal_summaries_dir is not None
+        _write_goal(config.goal_summaries_dir, "login")
+        dispatch("hint", ["login", "Fill", "Form", "--", "Click", "More", "Options"], config, _identity)
+        output = capsys.readouterr().out
+        assert "Hint saved" in output
+        # Verify it was actually saved
+        data = json.loads((config.goal_summaries_dir / "login-task.json").read_text())
+        assert len(data["hints"]) == 1
+        assert data["hints"][0]["phase"] == "Fill Form"
+        assert data["hints"][0]["text"] == "Click More Options"
+
+    def test_hint_command_missing_separator(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        config = _make_config(tmp_path)
+        dispatch("hint", ["login", "Fill", "Form", "no", "separator"], config, _identity)
+        output = capsys.readouterr().out
+        assert "Usage" in output
+
+    def test_hint_command_goal_not_found(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        config = _make_config(tmp_path)
+        dispatch("hint", ["nonexistent", "Phase", "--", "text"], config, _identity)
+        output = capsys.readouterr().out
+        assert "Goal not found" in output
+
+    def test_hints_command_lists(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        config = _make_config(tmp_path)
+        assert config.goal_summaries_dir is not None
+        _write_goal(config.goal_summaries_dir, "login")
+        # Add a hint first
+        goal_path = config.goal_summaries_dir / "login-task.json"
+        data = json.loads(goal_path.read_text())
+        data["hints"] = [{"phase": "Login", "text": "Use SSO"}]
+        goal_path.write_text(json.dumps(data))
+        dispatch("hints", ["login"], config, _identity)
+        output = capsys.readouterr().out
+        assert "[Login]" in output
+        assert "Use SSO" in output
+
+    def test_hints_command_empty(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        config = _make_config(tmp_path)
+        assert config.goal_summaries_dir is not None
+        _write_goal(config.goal_summaries_dir, "login")
+        dispatch("hints", ["login"], config, _identity)
+        output = capsys.readouterr().out
+        assert "No hints" in output
+
+    def test_hints_command_missing_arg(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        config = _make_config(tmp_path)
+        dispatch("hints", [], config, _identity)
+        output = capsys.readouterr().out
+        assert "Usage" in output
+
+    def test_unhint_command_removes(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        config = _make_config(tmp_path)
+        assert config.goal_summaries_dir is not None
+        _write_goal(config.goal_summaries_dir, "login")
+        goal_path = config.goal_summaries_dir / "login-task.json"
+        data = json.loads(goal_path.read_text())
+        data["hints"] = [{"phase": "Login", "text": "Hint A"}, {"phase": "Login", "text": "Hint B"}]
+        goal_path.write_text(json.dumps(data))
+        dispatch("unhint", ["login", "0"], config, _identity)
+        output = capsys.readouterr().out
+        assert "removed" in output
+        data = json.loads(goal_path.read_text())
+        assert len(data["hints"]) == 1
+        assert data["hints"][0]["text"] == "Hint B"
+
+    def test_unhint_command_invalid_index(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        config = _make_config(tmp_path)
+        assert config.goal_summaries_dir is not None
+        _write_goal(config.goal_summaries_dir, "login")
+        dispatch("unhint", ["login", "99"], config, _identity)
+        output = capsys.readouterr().out
+        assert "Invalid hint index" in output
+
+    def test_unhint_command_missing_args(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        config = _make_config(tmp_path)
+        dispatch("unhint", ["login"], config, _identity)
+        output = capsys.readouterr().out
+        assert "Usage" in output
+
+
+class TestRunHintsFlag:
+    @patch("spark_runner.orchestrator.run_single")
+    @patch("spark_runner.interactive.asyncio")
+    def test_run_hints_flag_passes_callback(
+        self, mock_asyncio: MagicMock, mock_run: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        config = _make_config(tmp_path)
+        assert config.goal_summaries_dir is not None
+        _write_goal(config.goal_summaries_dir, "login")
+        dispatch("run", ["login", "--hints"], config, _identity)
+        mock_run.assert_called_once()
+        kwargs = mock_run.call_args[1]
+        assert kwargs["on_phase_failure"] is not None
+
+    @patch("spark_runner.orchestrator.run_single")
+    @patch("spark_runner.interactive.asyncio")
+    def test_run_without_hints_flag_no_callback(
+        self, mock_asyncio: MagicMock, mock_run: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        config = _make_config(tmp_path)
+        assert config.goal_summaries_dir is not None
+        _write_goal(config.goal_summaries_dir, "login")
+        dispatch("run", ["login"], config, _identity)
+        mock_run.assert_called_once()
+        # on_phase_failure should not be in kwargs (or be None)
+        kwargs = mock_run.call_args[1]
+        assert kwargs.get("on_phase_failure") is None
+
+    @patch("spark_runner.orchestrator.run_multiple")
+    @patch("spark_runner.interactive.asyncio")
+    def test_run_multiple_hints_flag_passes_callback(
+        self, mock_asyncio: MagicMock, mock_run_multi: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        config = _make_config(tmp_path)
+        assert config.goal_summaries_dir is not None
+        _write_goal(config.goal_summaries_dir, "login")
+        _write_goal(config.goal_summaries_dir, "logout")
+        dispatch("run", ["login", "logout", "--hints"], config, _identity)
+        mock_run_multi.assert_called_once()
+        kwargs = mock_run_multi.call_args[1]
+        assert kwargs["on_phase_failure"] is not None
+
+    def test_completes_run_hints_flag(self, tmp_path: Path) -> None:
+        config = _make_config(tmp_path)
+        completer = SparkCompleter(config)
+        from prompt_toolkit.document import Document
+        doc = Document("run --", len("run --"))
+        results = [c.text for c in completer.get_completions(doc, None)]
+        assert "--hints" in results
+
+
 # ── CLI flag ─────────────────────────────────────────────────────────
 
 

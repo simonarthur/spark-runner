@@ -298,3 +298,213 @@ class TestStatusLine:
         sl._last_width = 50
         sl.clear()
         assert sl._last_width == 0
+
+
+class TestPhaseFailureCallback:
+    """Tests for the on_phase_failure retry mechanism in run_single."""
+
+    @pytest.mark.asyncio
+    async def test_phase_failure_calls_callback(
+        self, tmp_path: Path, _minimal_config: SparkConfig,
+    ) -> None:
+        """When a phase fails and callback returns a hint, retry should happen."""
+        config = _minimal_config
+
+        tasks_dir = config.tasks_dir
+        assert tasks_dir is not None
+        (tasks_dir / "fill-form.txt").write_text("Fill the form")
+
+        goal_file = config.goal_summaries_dir / "signup-task.json"
+        goal_data = {
+            "main_task": "Test user sign-up",
+            "key_observations": [],
+            "subtasks": [
+                {"phase_name": "Fill form", "filename": "fill-form.txt"},
+            ],
+        }
+        goal_file.write_text(json.dumps(goal_data))
+
+        task = TaskSpec(goal_path=goal_file)
+
+        callback = AsyncMock(return_value="Use the dropdown menu")
+
+        with (
+            patch("spark_runner.orchestrator.decompose_task") as mock_decompose,
+            patch("spark_runner.orchestrator.run_phase", new_callable=AsyncMock) as mock_run_phase,
+            patch("spark_runner.orchestrator.summarize_phase") as mock_summarize,
+            patch("spark_runner.orchestrator.Browser") as mock_browser_cls,
+            patch("spark_runner.orchestrator.ChatBrowserUse"),
+            patch("spark_runner.orchestrator.generate_report"),
+        ):
+            mock_browser_cls.return_value.stop = AsyncMock()
+            # First call fails, retry succeeds
+            mock_result_fail = MagicMock()
+            mock_result_fail.final_result.return_value = "Button not found"
+            mock_result_success = MagicMock(action_results=MagicMock(return_value=[]))
+            mock_run_phase.side_effect = [
+                (False, mock_result_fail, []),
+                (True, mock_result_success, []),
+            ]
+            mock_summarize.return_value = "Phase summary"
+
+            from spark_runner.orchestrator import run_single
+
+            result = await run_single(task, config, client=MagicMock(), on_phase_failure=callback)
+
+            callback.assert_called_once_with("Fill Form", "Button not found")
+            assert mock_run_phase.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_phase_failure_callback_none_stops(
+        self, tmp_path: Path, _minimal_config: SparkConfig,
+    ) -> None:
+        """When callback returns None, the run should stop without retry."""
+        config = _minimal_config
+
+        tasks_dir = config.tasks_dir
+        assert tasks_dir is not None
+        (tasks_dir / "fill-form.txt").write_text("Fill the form")
+
+        goal_file = config.goal_summaries_dir / "signup-task.json"
+        goal_data = {
+            "main_task": "Test user sign-up",
+            "key_observations": [],
+            "subtasks": [
+                {"phase_name": "Fill form", "filename": "fill-form.txt"},
+            ],
+        }
+        goal_file.write_text(json.dumps(goal_data))
+
+        task = TaskSpec(goal_path=goal_file)
+
+        callback = AsyncMock(return_value=None)
+
+        with (
+            patch("spark_runner.orchestrator.decompose_task"),
+            patch("spark_runner.orchestrator.run_phase", new_callable=AsyncMock) as mock_run_phase,
+            patch("spark_runner.orchestrator.summarize_phase") as mock_summarize,
+            patch("spark_runner.orchestrator.Browser") as mock_browser_cls,
+            patch("spark_runner.orchestrator.ChatBrowserUse"),
+            patch("spark_runner.orchestrator.generate_report"),
+        ):
+            mock_browser_cls.return_value.stop = AsyncMock()
+            mock_result = MagicMock()
+            mock_result.final_result.return_value = "Failed"
+            mock_run_phase.return_value = (False, mock_result, [])
+            mock_summarize.return_value = "Phase summary"
+
+            from spark_runner.orchestrator import run_single
+
+            await run_single(task, config, client=MagicMock(), on_phase_failure=callback)
+
+            callback.assert_called_once()
+            # Only one phase execution — no retry
+            assert mock_run_phase.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_hint_persisted_to_goal_file(
+        self, tmp_path: Path, _minimal_config: SparkConfig,
+    ) -> None:
+        """After callback returns a hint, it should be saved to the goal JSON."""
+        config = _minimal_config
+
+        tasks_dir = config.tasks_dir
+        assert tasks_dir is not None
+        (tasks_dir / "fill-form.txt").write_text("Fill the form")
+
+        goal_file = config.goal_summaries_dir / "signup-task.json"
+        goal_data = {
+            "main_task": "Test user sign-up",
+            "key_observations": [],
+            "subtasks": [
+                {"phase_name": "Fill form", "filename": "fill-form.txt"},
+            ],
+        }
+        goal_file.write_text(json.dumps(goal_data))
+
+        task = TaskSpec(goal_path=goal_file)
+
+        callback = AsyncMock(return_value="Try the other button")
+
+        with (
+            patch("spark_runner.orchestrator.decompose_task"),
+            patch("spark_runner.orchestrator.run_phase", new_callable=AsyncMock) as mock_run_phase,
+            patch("spark_runner.orchestrator.summarize_phase") as mock_summarize,
+            patch("spark_runner.orchestrator.Browser") as mock_browser_cls,
+            patch("spark_runner.orchestrator.ChatBrowserUse"),
+            patch("spark_runner.orchestrator.generate_report"),
+        ):
+            mock_browser_cls.return_value.stop = AsyncMock()
+            mock_result = MagicMock()
+            mock_result.final_result.return_value = "Failed"
+            mock_result_success = MagicMock(action_results=MagicMock(return_value=[]))
+            mock_run_phase.side_effect = [
+                (False, mock_result, []),
+                (True, mock_result_success, []),
+            ]
+            mock_summarize.return_value = "Phase summary"
+
+            from spark_runner.orchestrator import run_single
+
+            await run_single(task, config, client=MagicMock(), on_phase_failure=callback)
+
+            # Verify hint was saved to goal file
+            saved = json.loads(goal_file.read_text())
+            assert "hints" in saved
+            assert len(saved["hints"]) == 1
+            assert saved["hints"][0]["phase"] == "Fill Form"
+            assert saved["hints"][0]["text"] == "Try the other button"
+
+    @pytest.mark.asyncio
+    async def test_retry_success_continues_to_next_phase(
+        self, tmp_path: Path, _minimal_config: SparkConfig,
+    ) -> None:
+        """After a successful retry, remaining phases should execute."""
+        config = _minimal_config
+
+        tasks_dir = config.tasks_dir
+        assert tasks_dir is not None
+        (tasks_dir / "fill-form.txt").write_text("Fill the form")
+        (tasks_dir / "verify-result.txt").write_text("Verify result")
+
+        goal_file = config.goal_summaries_dir / "signup-task.json"
+        goal_data = {
+            "main_task": "Test user sign-up",
+            "key_observations": [],
+            "subtasks": [
+                {"phase_name": "Fill form", "filename": "fill-form.txt"},
+                {"phase_name": "Verify result", "filename": "verify-result.txt"},
+            ],
+        }
+        goal_file.write_text(json.dumps(goal_data))
+
+        task = TaskSpec(goal_path=goal_file)
+
+        callback = AsyncMock(return_value="Use dropdown")
+
+        with (
+            patch("spark_runner.orchestrator.decompose_task"),
+            patch("spark_runner.orchestrator.run_phase", new_callable=AsyncMock) as mock_run_phase,
+            patch("spark_runner.orchestrator.summarize_phase") as mock_summarize,
+            patch("spark_runner.orchestrator.Browser") as mock_browser_cls,
+            patch("spark_runner.orchestrator.ChatBrowserUse"),
+            patch("spark_runner.orchestrator.generate_report"),
+        ):
+            mock_browser_cls.return_value.stop = AsyncMock()
+            mock_result_fail = MagicMock()
+            mock_result_fail.final_result.return_value = "Failed"
+            mock_result_success = MagicMock(action_results=MagicMock(return_value=[]))
+            # Phase 1 fails, retry succeeds, Phase 2 succeeds
+            mock_run_phase.side_effect = [
+                (False, mock_result_fail, []),
+                (True, mock_result_success, []),
+                (True, mock_result_success, []),
+            ]
+            mock_summarize.return_value = "Phase summary"
+
+            from spark_runner.orchestrator import run_single
+
+            result = await run_single(task, config, client=MagicMock(), on_phase_failure=callback)
+
+            # 3 run_phase calls: fail + retry + phase 2
+            assert mock_run_phase.call_count == 3

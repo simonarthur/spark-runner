@@ -12,6 +12,53 @@ from spark_runner.models import GoalInfo
 from spark_runner.storage import write_with_history
 
 
+def load_hints(goal_path: Path) -> list[dict[str, str]]:
+    """Load hints from a goal summary JSON.
+
+    Args:
+        goal_path: Path to the goal summary JSON file.
+
+    Returns:
+        A list of ``{"phase": ..., "text": ...}`` dicts.
+    """
+    data: dict[str, Any] = json.loads(goal_path.read_text())
+    return data.get("hints", [])
+
+
+def save_hint(goal_path: Path, phase: str, text: str) -> None:
+    """Append a hint to the goal summary JSON.
+
+    Args:
+        goal_path: Path to the goal summary JSON file.
+        phase: The phase name this hint applies to.
+        text: The hint text.
+    """
+    data: dict[str, Any] = json.loads(goal_path.read_text())
+    hints: list[dict[str, str]] = data.setdefault("hints", [])
+    hints.append({"phase": phase, "text": text})
+    goal_path.write_text(json.dumps(data, indent=2))
+
+
+def remove_hint(goal_path: Path, index: int) -> bool:
+    """Remove a hint by index.
+
+    Args:
+        goal_path: Path to the goal summary JSON file.
+        index: Zero-based index of the hint to remove.
+
+    Returns:
+        True if the hint was removed, False if the index was out of range.
+    """
+    data: dict[str, Any] = json.loads(goal_path.read_text())
+    hints: list[dict[str, str]] = data.get("hints", [])
+    if 0 <= index < len(hints):
+        hints.pop(index)
+        data["hints"] = hints
+        goal_path.write_text(json.dumps(data, indent=2))
+        return True
+    return False
+
+
 def get_last_run_info(
     runs_dir: Path | None, task_name: str,
 ) -> tuple[str, str] | None:

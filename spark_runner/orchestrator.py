@@ -10,7 +10,7 @@ import tempfile
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Awaitable, Callable
 
 import anthropic
 from browser_use import Browser, ChatBrowserUse
@@ -21,7 +21,7 @@ from spark_runner.decomposition import decompose_task, generate_task_name
 from spark_runner.execution import build_augmented_task, run_phase
 from spark_runner.llm_trace import save_llm_conversation
 from spark_runner.observation_routing import route_observations_to_phases
-from spark_runner.goals import load_goal_summary
+from spark_runner.goals import load_goal_summary, load_hints, save_hint
 from spark_runner.knowledge import find_relevant_knowledge, load_knowledge_index
 from spark_runner.log import attach_agent_log_handler, detach_agent_log_handler, log_event, log_problem
 from spark_runner.models import (
@@ -239,6 +239,7 @@ async def run_single(
     client: anthropic.Anthropic | None = None,
     browser: Browser | None = None,
     status_line: StatusLine | None = None,
+    on_phase_failure: Callable[[str, str], Awaitable[str | None]] | None = None,
 ) -> RunResult:
     """Run a single task (prompt or goal file) and return the result.
 
@@ -248,6 +249,9 @@ async def run_single(
         client: Optional pre-configured Anthropic client.
         browser: Optional pre-configured browser (for shared sessions).
         status_line: Optional live status display managed by the caller.
+        on_phase_failure: Optional async callback invoked when a phase fails.
+            Called with ``(phase_name, error_summary)`` and should return a
+            hint string to retry, or ``None`` to stop.
 
     Returns:
         A ``RunResult`` with all phase outcomes and screenshots.
@@ -331,6 +335,11 @@ async def run_single(
         print(f"Task name: {task_name}")
         phases = []
         km_index = knowledge_index
+
+    # --- Load hints ---
+    goal_hints: list[dict[str, str]] = []
+    if goal_path is not None and goal_path.exists():
+        goal_hints = load_hints(goal_path)
 
     # --- Status line ---
     own_status = status_line is None
@@ -506,10 +515,15 @@ async def run_single(
             cross_obs: list[str | dict[str, str]] | None = (
                 routed_observations.get(phase["name"]) or None
             )
+            phase_hints: list[str] = [
+                h["text"] for h in goal_hints
+                if h["phase"].lower() == phase["name"].lower()
+            ]
             augmented_task: str = build_augmented_task(
                 phase["task"], prior_summaries, restore_fn,
                 cross_goal_observations=cross_obs,
                 ui_instructions=config.ui_instructions,
+                hints=phase_hints or None,
             )
             augmented_task_truncated: str = (
                 augmented_task[:1000] + "..." if len(augmented_task) > 1000 else augmented_task
@@ -597,7 +611,63 @@ async def run_single(
             log_event(event_log, f"PHASE SUMMARY ({phase['name']}):\n{summary_truncated}")
 
             if not success:
-                log_event(event_log, f"ABORTING: phase '{phase['name']}' failed.")
+                retried: bool = False
+                if on_phase_failure is not None:
+                    if status_line:
+                        status_line.clear()
+                    error_summary: str = result.final_result() or "Phase failed"
+                    hint_text: str | None = await on_phase_failure(phase["name"], error_summary)
+                    if hint_text:
+                        retried = True
+                        if goal_path is not None:
+                            save_hint(goal_path, phase["name"], hint_text)
+                            goal_hints.append({"phase": phase["name"], "text": hint_text})
+                        retry_hints: list[str] = [
+                            h["text"] for h in goal_hints
+                            if h["phase"].lower() == phase["name"].lower()
+                        ]
+                        retry_task: str = build_augmented_task(
+                            phase["task"], prior_summaries, restore_fn,
+                            cross_goal_observations=cross_obs,
+                            ui_instructions=config.ui_instructions,
+                            hints=retry_hints,
+                        )
+                        log_event(event_log, f"RETRYING phase '{phase['name']}' with operator hint")
+                        if status_line:
+                            await status_line.start()
+                        success, result, phase_screenshots_retry = await run_phase(
+                            phase["name"], retry_task, llm, browser,
+                            conversation_log, event_log, problem_log, run_dir,
+                        )
+                        all_screenshots.extend(phase_screenshots_retry)
+                        phase_screenshots.extend(phase_screenshots_retry)
+                        summary = summarize_phase(
+                            phase["name"], phase["task"], result, success,
+                            client, config.get_model("summarization"),
+                            run_dir=run_dir,
+                        )
+                        _extract_and_log_observations(
+                            summary, phase["name"], event_log, problem_log, success=success,
+                        )
+                        phase_record = {
+                            "name": phase["name"],
+                            "outcome": "SUCCESS" if success else "FAILED",
+                            "summary": summary,
+                            "filename": subtask_path.name,
+                        }
+                        prior_summaries[-1] = phase_record
+                        all_summaries[-1] = phase_record
+                        phase_results[-1] = PhaseResult(
+                            name=phase["name"],
+                            outcome="SUCCESS" if success else "FAILED",
+                            summary=summary,
+                            filename=subtask_path.name,
+                            screenshots=phase_screenshots,
+                        )
+                        if success:
+                            log_event(event_log, f"RETRY SUCCEEDED: phase '{phase['name']}'")
+                            continue
+                log_event(event_log, f"STOPPING: phase '{phase['name']}' failed.")
                 break
         else:
             log_event(event_log, "ALL PHASES COMPLETED SUCCESSFULLY.")
@@ -774,6 +844,7 @@ async def run_multiple(
     config: SparkConfig,
     shared_session: bool = False,
     parallel: int = 1,
+    on_phase_failure: Callable[[str, str], Awaitable[str | None]] | None = None,
 ) -> list[RunResult]:
     """Run multiple tasks sequentially or in parallel.
 
@@ -782,6 +853,8 @@ async def run_multiple(
         config: Configuration.
         shared_session: If True, keep the same browser across tasks.
         parallel: Number of concurrent browser sessions (future use).
+        on_phase_failure: Optional async callback passed through to each
+            ``run_single`` call.
 
     Returns:
         A list of ``RunResult`` for each task.
@@ -804,7 +877,7 @@ async def run_multiple(
         if parallel > 1 and not shared_session:
             # Concurrent execution (each with own browser)
             async def _run_one(t: TaskSpec) -> RunResult:
-                return await run_single(t, config, client)
+                return await run_single(t, config, client, on_phase_failure=on_phase_failure)
 
             results = await asyncio.gather(*[_run_one(t) for t in tasks])
             results = list(results)
@@ -813,7 +886,10 @@ async def run_multiple(
             await status.start()
             for i, task in enumerate(tasks, 1):
                 status.set_goal(_goal_label(task), i, len(tasks))
-                result = await run_single(task, config, client, browser, status_line=status)
+                result = await run_single(
+                    task, config, client, browser,
+                    status_line=status, on_phase_failure=on_phase_failure,
+                )
                 results.append(result)
             await status.stop()
     finally:

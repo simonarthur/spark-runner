@@ -21,18 +21,21 @@ from spark_runner.models import SparkConfig
 COMMANDS: dict[str, str] = {
     "goals": "List all goals (--unrun, --failed)",
     "show": "Show goal detail: show <goal>",
-    "run": "Run goal(s): run <goal> ... (--unrun, --failed, --no-update-summary, --no-update-tasks, --no-knowledge-reuse, --regenerate-tasks)",
+    "run": "Run goal(s): run <goal> ... (--unrun, --failed, --no-update-summary, --no-update-tasks, --no-knowledge-reuse, --regenerate-tasks, --hints)",
     "delete": "Delete a goal: delete <goal>",
     "results": "List runs, or show detail: results [task/timestamp]",
     "errors": "Show runs with errors",
     "classify": "Classify observations in all goals",
     "orphans": "List orphan tasks (--clean to remove)",
+    "hint": "Add hint: hint <goal> <phase> -- <text>",
+    "hints": "List hints: hints <goal>",
+    "unhint": "Remove hint: unhint <goal> <index>",
     "help": "Show available commands",
     "quit": "Exit the REPL",
 }
 
 # Commands that accept goal names as arguments
-_GOAL_ARG_COMMANDS = {"show", "run", "delete"}
+_GOAL_ARG_COMMANDS = {"show", "run", "delete", "hint", "hints", "unhint"}
 # Commands that accept run paths as arguments
 _RUN_ARG_COMMANDS = {"results"}
 
@@ -96,7 +99,7 @@ class SparkCompleter(Completer):
             if cmd == "goals":
                 flags = ["--unrun", "--failed"]
             elif cmd == "run":
-                flags = ["--unrun", "--failed", "--no-update-summary", "--no-update-tasks", "--no-knowledge-reuse", "--regenerate-tasks"]
+                flags = ["--unrun", "--failed", "--no-update-summary", "--no-update-tasks", "--no-knowledge-reuse", "--regenerate-tasks", "--hints"]
             elif cmd == "orphans":
                 flags = ["--clean"]
             for flag in flags:
@@ -169,6 +172,12 @@ def dispatch(
         _handle_errors(args, config)
     elif cmd == "classify":
         _handle_classify(config)
+    elif cmd == "hint":
+        _handle_hint(args, config)
+    elif cmd == "hints":
+        _handle_hints(args, config)
+    elif cmd == "unhint":
+        _handle_unhint(args, config)
     elif cmd == "orphans":
         _handle_orphans(args, config)
     else:
@@ -212,6 +221,28 @@ def _handle_show(
     show_goal_detail(config.goal_summaries_dir, args[0], restore_fn)
 
 
+async def _phase_failure_callback(phase_name: str, error_summary: str) -> str | None:
+    """Prompt the user for a hint when a phase fails during interactive mode.
+
+    Args:
+        phase_name: Name of the failed phase.
+        error_summary: Short description of the failure.
+
+    Returns:
+        The hint text if the user provided one, or ``None`` to stop.
+    """
+    print(f"\n  Phase \"{phase_name}\" failed.")
+    print(f"  Error: {error_summary[:200]}")
+    print()
+    try:
+        hint: str = await asyncio.to_thread(
+            input, "  Enter a hint to save and retry, or press Enter to stop: "
+        )
+    except (EOFError, KeyboardInterrupt):
+        return None
+    return hint.strip() or None
+
+
 def _handle_run(args: list[str], config: SparkConfig) -> None:
     from spark_runner.models import TaskSpec
 
@@ -221,6 +252,7 @@ def _handle_run(args: list[str], config: SparkConfig) -> None:
     no_update_tasks = "--no-update-tasks" in args
     no_knowledge_reuse = "--no-knowledge-reuse" in args
     regenerate_tasks = "--regenerate-tasks" in args
+    enable_hints = "--hints" in args
     goal_names = [a for a in args if not a.startswith("--")]
 
     tasks: list[TaskSpec] = []
@@ -267,15 +299,17 @@ def _handle_run(args: list[str], config: SparkConfig) -> None:
     if overrides:
         run_config = dataclasses.replace(config, **overrides)
 
+    callback = _phase_failure_callback if enable_hints else None
+
     print(f"Running {len(tasks)} goal(s)...\n")
     from spark_runner.orchestrator import run_multiple, run_single
 
     if len(tasks) == 1:
-        asyncio.run(run_single(tasks[0], run_config))
+        asyncio.run(run_single(tasks[0], run_config, on_phase_failure=callback))
     else:
         # Auto-close browsers between goals so the user isn't prompted
         multi_config = dataclasses.replace(run_config, auto_close=True)
-        asyncio.run(run_multiple(tasks, multi_config))
+        asyncio.run(run_multiple(tasks, multi_config, on_phase_failure=callback))
 
 
 def _handle_delete(args: list[str], config: SparkConfig) -> None:
@@ -341,6 +375,89 @@ def _handle_classify(config: SparkConfig) -> None:
         config.goal_summaries_dir,
         lambda prompt, obs: classify_observations(prompt, obs, client, model_config),
     )
+
+
+def _handle_hint(args: list[str], config: SparkConfig) -> None:
+    """Add a hint: ``hint <goal> <phase> -- <text>``."""
+    if "--" not in args:
+        print("Usage: hint <goal> <phase> -- <text>")
+        return
+
+    sep_idx: int = args.index("--")
+    before: list[str] = args[:sep_idx]
+    after: list[str] = args[sep_idx + 1:]
+
+    if len(before) < 2 or not after:
+        print("Usage: hint <goal> <phase> -- <text>")
+        return
+
+    goal_name: str = before[0]
+    phase_name: str = " ".join(before[1:])
+    text: str = " ".join(after)
+
+    assert config.goal_summaries_dir is not None
+    goal_path: Path = config.goal_summaries_dir / f"{goal_name}-task.json"
+    if not goal_path.exists():
+        print(f"Goal not found: {goal_name}")
+        return
+
+    from spark_runner.goals import save_hint
+
+    save_hint(goal_path, phase_name, text)
+    print(f"Hint saved for phase \"{phase_name}\" in goal \"{goal_name}\".")
+
+
+def _handle_hints(args: list[str], config: SparkConfig) -> None:
+    """List hints for a goal: ``hints <goal>``."""
+    if not args:
+        print("Usage: hints <goal>")
+        return
+
+    goal_name: str = args[0]
+    assert config.goal_summaries_dir is not None
+    goal_path: Path = config.goal_summaries_dir / f"{goal_name}-task.json"
+    if not goal_path.exists():
+        print(f"Goal not found: {goal_name}")
+        return
+
+    from spark_runner.goals import load_hints
+
+    hints: list[dict[str, str]] = load_hints(goal_path)
+    if not hints:
+        print(f"No hints for goal \"{goal_name}\".")
+        return
+
+    print(f"Hints for \"{goal_name}\":\n")
+    for i, h in enumerate(hints):
+        print(f"  {i}. [{h['phase']}] {h['text']}")
+    print()
+
+
+def _handle_unhint(args: list[str], config: SparkConfig) -> None:
+    """Remove a hint by index: ``unhint <goal> <index>``."""
+    if len(args) < 2:
+        print("Usage: unhint <goal> <index>")
+        return
+
+    goal_name: str = args[0]
+    try:
+        index: int = int(args[1])
+    except ValueError:
+        print(f"Invalid index: {args[1]}")
+        return
+
+    assert config.goal_summaries_dir is not None
+    goal_path: Path = config.goal_summaries_dir / f"{goal_name}-task.json"
+    if not goal_path.exists():
+        print(f"Goal not found: {goal_name}")
+        return
+
+    from spark_runner.goals import remove_hint
+
+    if remove_hint(goal_path, index):
+        print(f"Hint {index} removed from goal \"{goal_name}\".")
+    else:
+        print(f"Invalid hint index: {index}")
 
 
 def _handle_orphans(args: list[str], config: SparkConfig) -> None:

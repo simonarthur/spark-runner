@@ -53,6 +53,7 @@ def build_augmented_task(
     restore_fn: Callable[[str], str],
     cross_goal_observations: list[str | dict[str, str]] | None = None,
     ui_instructions: list[str] | None = None,
+    hints: list[str] | None = None,
 ) -> str:
     """Prepend accumulated context to a phase's task instructions.
 
@@ -62,6 +63,7 @@ def build_augmented_task(
         restore_fn: Function to restore placeholders in stored text.
         cross_goal_observations: Optional observations from prior goal runs.
         ui_instructions: Optional site-specific UI hints to inject.
+        hints: Optional operator hints for this phase (from human reviewers).
 
     Returns:
         The augmented task string with context sections prepended.
@@ -84,6 +86,12 @@ def build_augmented_task(
         for s in prior_summaries:
             context_parts.append(f"\n-- Phase: {s['name']} ({s['outcome']}) --")
             context_parts.append(s["summary"])
+        context_parts.append("")
+
+    if hints:
+        context_parts.append("=== OPERATOR HINTS (from a human reviewer — follow these closely) ===")
+        for h in hints:
+            context_parts.append(f"- {h}")
         context_parts.append("")
 
     if not context_parts:
