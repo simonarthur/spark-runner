@@ -471,6 +471,9 @@ async def run_single(
     if goal_path is not None and goal_path.exists():
         goal_hints = load_hints(goal_path)
 
+    # Separate goal-level hints (phase=="") for decomposition
+    decomposition_hints: list[str] = [h["text"] for h in goal_hints if not h["phase"]]
+
     # --- Status line ---
     own_status = status_line is None
     if own_status:
@@ -560,6 +563,7 @@ async def run_single(
             config.get_model("task_decomposition"),
             knowledge_match=knowledge_match,
             run_dir=run_dir,
+            hints=decomposition_hints or None,
         )
     if (run_dir / "llm_task_decomposition.json").exists():
         pipeline_steps.append({

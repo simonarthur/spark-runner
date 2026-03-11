@@ -61,7 +61,7 @@ COMMANDS: dict[str, str] = {
     "errors": "Show runs with errors",
     "classify": "Classify observations in all goals",
     "orphans": "List orphan tasks (--clean to remove)",
-    "hint": "Add hint: hint <goal> <phase> -- <text>",
+    "hint": "Add hint: hint <goal> [<phase>] -- <text>",
     "hints": "List hints: hints <goal>",
     "unhint": "Remove hint: unhint <goal> <index>",
     "help": "Show available commands",
@@ -423,21 +423,21 @@ def _handle_classify(config: SparkConfig) -> None:
 
 
 def _handle_hint(args: list[str], config: SparkConfig) -> None:
-    """Add a hint: ``hint <goal> <phase> -- <text>``."""
+    """Add a hint: ``hint <goal> [<phase>] -- <text>``."""
     if "--" not in args:
-        print("Usage: hint <goal> <phase> -- <text>")
+        print("Usage: hint <goal> [<phase>] -- <text>")
         return
 
     sep_idx: int = args.index("--")
     before: list[str] = args[:sep_idx]
     after: list[str] = args[sep_idx + 1:]
 
-    if len(before) < 2 or not after:
-        print("Usage: hint <goal> <phase> -- <text>")
+    if len(before) < 1 or not after:
+        print("Usage: hint <goal> [<phase>] -- <text>")
         return
 
     goal_name: str = before[0]
-    phase_name: str = " ".join(before[1:])
+    phase_name: str = " ".join(before[1:]) if len(before) >= 2 else ""
     text: str = " ".join(after)
 
     assert config.goal_summaries_dir is not None
@@ -449,7 +449,10 @@ def _handle_hint(args: list[str], config: SparkConfig) -> None:
     from spark_runner.goals import save_hint
 
     save_hint(goal_path, phase_name, text)
-    print(f"Hint saved for phase \"{phase_name}\" in goal \"{goal_name}\".")
+    if phase_name:
+        print(f"Hint saved for phase \"{phase_name}\" in goal \"{goal_name}\".")
+    else:
+        print(f"Goal-level hint saved for \"{goal_name}\".")
 
 
 def _handle_hints(args: list[str], config: SparkConfig) -> None:
@@ -474,7 +477,8 @@ def _handle_hints(args: list[str], config: SparkConfig) -> None:
 
     print(f"Hints for \"{goal_name}\":\n")
     for i, h in enumerate(hints):
-        print(f"  {i}. [{h['phase']}] {h['text']}")
+        label: str = h["phase"] if h["phase"] else "Goal"
+        print(f"  {i}. [{label}] {h['text']}")
     print()
 
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import random
 import re
 from pathlib import Path
 from typing import Any, Callable
@@ -59,6 +60,7 @@ def decompose_task(
     model_config: ModelConfig | None = None,
     knowledge_match: dict[str, Any] | None = None,
     run_dir: Path | None = None,
+    hints: list[str] | None = None,
 ) -> list[dict[str, str]]:
     """Use an LLM to decompose a free-form task into ordered execution phases.
 
@@ -70,6 +72,8 @@ def decompose_task(
         restore_fn: Function to restore placeholders in stored text.
         model_config: Model configuration.
         knowledge_match: Optional knowledge match result with reusable subtasks.
+        run_dir: Optional directory to save LLM conversation traces.
+        hints: Optional goal-level hints from a human reviewer.
 
     Returns:
         A list of phase dicts with ``name`` and ``task`` keys.
@@ -104,10 +108,19 @@ def decompose_task(
             obs_parts.append(f"  - {obs}")
         observations_section = "\n".join(obs_parts)
 
+    hints_section: str = ""
+    if hints:
+        hints_lines: list[str] = [
+            "\n\nOPERATOR HINTS (from a human reviewer — follow these closely when planning phases):"
+        ]
+        for hint_text in hints:
+            hints_lines.append(f"- {hint_text}")
+        hints_section = "\n".join(hints_lines)
+
     reuse_format: str = ""
     if reuse_section:
         reuse_format = '\nFor reused phases, use: {"name": "Phase Name", "reuse": "filename.txt"}'
-
+    random_number = random.randint(100000, 999999)
     prompt_content: str = f"""You are a browser automation planner for SparkyAI ({host}).
 
 Given a user's task description, decompose it into sequential phases that a browser automation agent will execute one at a time. Each phase shares the same browser session, so the next phase picks up where the previous one left off.
@@ -122,6 +135,7 @@ IMPORTANT RULES:
     "If the correct user is logged in, do not log in again. A login phase should be considered a SUCCESS in this state."
     "IMPORTANT: Before doing anything else, check whether this phase's goal has ALREADY been achieved by a prior phase (e.g. the expected UI state is already visible). If so, report success immediately without taking any actions."
     "Check for error popup/toast after every action. Report any deviations from expected behavior."
+    "{random_number} Usernames for form fields should be random and unique.  For example, if the form has a field for 'Email', the email should be random and unique.  Think of a highly obscure English adjective (the less common, the better)."
     "If you cannot find an expected UI element after reasonable exploration (scrolling, waiting for load), do NOT keep retrying the same approaches and do NOT switch to a different mechanism. Report what you found, note the missing element, and FAIL the phase."
     "If a feature does not work as expected (e.g. search returns no results, a button does nothing, a form fails to submit), do NOT work around it using a different feature or navigation path. Report the failure and FAIL the phase."
 - Every phase's FINAL instruction (last numbered step) MUST be a STOP condition in this exact format:
@@ -137,7 +151,7 @@ IMPORTANT RULES:
     RIGHT: "If there is an option to select target platforms, select Facebook, LinkedIn, and Google Ads.
             If no platform selection is available, note this and proceed — the tool may auto-select platforms."
   Use phrases like "if available", "look for", "if present" for UI elements beyond login.
-{reuse_section}{observations_section}
+{reuse_section}{observations_section}{hints_section}
 
 Return ONLY valid JSON — an array of objects with "name" and "task" keys.{reuse_format} Example:
 [

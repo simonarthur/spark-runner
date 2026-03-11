@@ -676,3 +676,99 @@ class TestPhaseFailureCallback:
 
             # 3 run_phase calls: fail + retry + phase 2
             assert mock_run_phase.call_count == 3
+
+
+class TestDecompositionHints:
+    """Tests for goal-level hints being passed to decompose_task."""
+
+    @pytest.mark.asyncio
+    async def test_decomposition_hints_passed(
+        self, tmp_path: Path, _minimal_config: SparkConfig,
+    ) -> None:
+        """Goal-level hints (phase='') should be forwarded to decompose_task."""
+        config = _minimal_config
+
+        goal_file = config.goal_summaries_dir / "signup-task.json"
+        goal_data: dict[str, Any] = {
+            "main_task": "Test user sign-up",
+            "key_observations": [],
+            "subtasks": [],
+            "hints": [
+                {"phase": "", "text": "Split the form into two phases"},
+                {"phase": "", "text": "Skip the export step"},
+                {"phase": "Login", "text": "Use SSO button"},
+            ],
+        }
+        goal_file.write_text(json.dumps(goal_data))
+
+        task = TaskSpec(goal_path=goal_file)
+
+        with (
+            patch("spark_runner.orchestrator.decompose_task") as mock_decompose,
+            patch("spark_runner.orchestrator.run_phase", new_callable=AsyncMock) as mock_run_phase,
+            patch("spark_runner.orchestrator.summarize_phase") as mock_summarize,
+            patch("spark_runner.orchestrator.Browser") as mock_browser_cls,
+            patch("spark_runner.orchestrator.ChatBrowserUse"),
+            patch("spark_runner.orchestrator.generate_report"),
+        ):
+            mock_browser_cls.return_value.stop = AsyncMock()
+            mock_decompose.return_value = [
+                {"name": "Fill form", "task": "Fill out the sign-up form"},
+            ]
+            mock_run_phase.return_value = (True, MagicMock(action_results=MagicMock(return_value=[])), [])
+            mock_summarize.return_value = "Filled the form successfully"
+
+            from spark_runner.orchestrator import run_single
+
+            await run_single(task, config, client=MagicMock())
+
+            mock_decompose.assert_called_once()
+            # Only goal-level hints (phase="") should be passed
+            passed_hints = mock_decompose.call_args[1].get("hints")
+            assert passed_hints == [
+                "Split the form into two phases",
+                "Skip the export step",
+            ]
+
+    @pytest.mark.asyncio
+    async def test_no_goal_hints_passes_none(
+        self, tmp_path: Path, _minimal_config: SparkConfig,
+    ) -> None:
+        """When there are no goal-level hints, hints=None should be passed."""
+        config = _minimal_config
+
+        goal_file = config.goal_summaries_dir / "signup-task.json"
+        goal_data: dict[str, Any] = {
+            "main_task": "Test user sign-up",
+            "key_observations": [],
+            "subtasks": [],
+            "hints": [
+                {"phase": "Login", "text": "Use SSO button"},
+            ],
+        }
+        goal_file.write_text(json.dumps(goal_data))
+
+        task = TaskSpec(goal_path=goal_file)
+
+        with (
+            patch("spark_runner.orchestrator.decompose_task") as mock_decompose,
+            patch("spark_runner.orchestrator.run_phase", new_callable=AsyncMock) as mock_run_phase,
+            patch("spark_runner.orchestrator.summarize_phase") as mock_summarize,
+            patch("spark_runner.orchestrator.Browser") as mock_browser_cls,
+            patch("spark_runner.orchestrator.ChatBrowserUse"),
+            patch("spark_runner.orchestrator.generate_report"),
+        ):
+            mock_browser_cls.return_value.stop = AsyncMock()
+            mock_decompose.return_value = [
+                {"name": "Fill form", "task": "Fill out the sign-up form"},
+            ]
+            mock_run_phase.return_value = (True, MagicMock(action_results=MagicMock(return_value=[])), [])
+            mock_summarize.return_value = "Filled the form successfully"
+
+            from spark_runner.orchestrator import run_single
+
+            await run_single(task, config, client=MagicMock())
+
+            mock_decompose.assert_called_once()
+            passed_hints = mock_decompose.call_args[1].get("hints")
+            assert passed_hints is None

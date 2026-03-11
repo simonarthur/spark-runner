@@ -752,6 +752,56 @@ class TestHintCommands:
         output = capsys.readouterr().out
         assert "Usage" in output
 
+    def test_hint_goal_level_saves(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """``hint login -- some text`` saves a goal-level hint with phase=""."""
+        config = _make_config(tmp_path)
+        assert config.goal_summaries_dir is not None
+        _write_goal(config.goal_summaries_dir, "login")
+        dispatch("hint", ["login", "--", "split", "form", "into", "two", "phases"], config, _identity)
+        output = capsys.readouterr().out
+        assert "Goal-level hint saved" in output
+        data = json.loads((config.goal_summaries_dir / "login-task.json").read_text())
+        assert len(data["hints"]) == 1
+        assert data["hints"][0]["phase"] == ""
+        assert data["hints"][0]["text"] == "split form into two phases"
+
+    def test_hints_displays_goal_level(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """Goal-level hints display ``[Goal]`` label instead of empty phase."""
+        config = _make_config(tmp_path)
+        assert config.goal_summaries_dir is not None
+        _write_goal(config.goal_summaries_dir, "login")
+        goal_path = config.goal_summaries_dir / "login-task.json"
+        data = json.loads(goal_path.read_text())
+        data["hints"] = [
+            {"phase": "", "text": "Add a logout step at the end"},
+            {"phase": "Login", "text": "Use the SSO button"},
+        ]
+        goal_path.write_text(json.dumps(data))
+        dispatch("hints", ["login"], config, _identity)
+        output = capsys.readouterr().out
+        assert "[Goal]" in output
+        assert "Add a logout step at the end" in output
+        assert "[Login]" in output
+        assert "Use the SSO button" in output
+
+    def test_hint_still_works_with_phase(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """Existing ``hint login Fill Form -- text`` behavior is unchanged."""
+        config = _make_config(tmp_path)
+        assert config.goal_summaries_dir is not None
+        _write_goal(config.goal_summaries_dir, "login")
+        dispatch("hint", ["login", "Fill", "Form", "--", "Use", "tab", "key"], config, _identity)
+        output = capsys.readouterr().out
+        assert 'Hint saved for phase "Fill Form"' in output
+        data = json.loads((config.goal_summaries_dir / "login-task.json").read_text())
+        assert data["hints"][0]["phase"] == "Fill Form"
+        assert data["hints"][0]["text"] == "Use tab key"
+
 
 class TestRunHintsFlag:
     @patch("spark_runner.orchestrator.run_single")
