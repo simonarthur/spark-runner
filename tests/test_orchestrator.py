@@ -270,6 +270,50 @@ class TestStatusLine:
         assert "Goal Time:" in rendered
         assert "Total Time:" in rendered
 
+    def test_render_contains_phase_info(self) -> None:
+        sl = StatusLine()
+        sl.set_goal("login", 1, 3)
+        sl.set_phase("Fill Form", 2, 5)
+        rendered = sl._render()
+        assert "Goal: login (1/3)" in rendered
+        assert "Phase: Fill Form (2/5)" in rendered
+
+    def test_render_contains_status(self) -> None:
+        sl = StatusLine()
+        sl.set_goal("login", 1, 1)
+        sl.set_status("Decomposing task")
+        rendered = sl._render()
+        assert "Decomposing task" in rendered
+
+    def test_render_phase_and_status(self) -> None:
+        sl = StatusLine()
+        sl.set_goal("login", 1, 1)
+        sl.set_phase("Submit", 1, 3)
+        sl.set_status("Summarizing")
+        rendered = sl._render()
+        assert "Phase: Submit (1/3)" in rendered
+        assert "Summarizing" in rendered
+
+    def test_set_phase_clears_status(self) -> None:
+        sl = StatusLine()
+        sl.set_goal("login", 1, 1)
+        sl.set_status("Old status")
+        sl.set_phase("New Phase", 1, 2)
+        rendered = sl._render()
+        assert "Old status" not in rendered
+        assert "Phase: New Phase (1/2)" in rendered
+
+    def test_set_goal_clears_phase_and_status(self) -> None:
+        sl = StatusLine()
+        sl.set_goal("login", 1, 2)
+        sl.set_phase("Phase A", 1, 3)
+        sl.set_status("Summarizing")
+        sl.set_goal("logout", 2, 2)
+        rendered = sl._render()
+        assert "Phase A" not in rendered
+        assert "Summarizing" not in rendered
+        assert "Goal: logout (2/2)" in rendered
+
     def test_set_goal_resets_goal_timer(self) -> None:
         sl = StatusLine()
         sl.set_goal("login", 1, 2)
@@ -321,8 +365,9 @@ class TestStatusLine:
             assert "\033[24;1H" in written
             assert "\033[K" in written
             assert "\033[u" in written
-            # Should have yellow-bg/black-fg styling
-            assert "\033[30;43m" in written
+            # Should have prompt_toolkit-rendered styling (256-color yellow bg, black fg)
+            assert "48;5;226" in written   # yellow background
+            assert "38;5;16" in written    # black foreground
             assert "\033[0m" in written
 
     def test_write_falls_back_on_non_tty(self) -> None:

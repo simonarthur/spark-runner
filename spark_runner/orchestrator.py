@@ -179,6 +179,10 @@ class StatusLine:
         self._goal_name: str = ""
         self._goal_index: int = 0
         self._goal_total: int = 0
+        self._phase_name: str = ""
+        self._phase_index: int = 0
+        self._phase_total: int = 0
+        self._status: str = ""
         self._task: asyncio.Task[None] | None = None
         self._last_width: int = 0
         # TTY / scroll-region state
@@ -193,6 +197,21 @@ class StatusLine:
         self._goal_index = index
         self._goal_total = total
         self._goal_start = time.monotonic()
+        self._phase_name = ""
+        self._phase_index = 0
+        self._phase_total = 0
+        self._status = ""
+
+    def set_phase(self, name: str, index: int, total: int) -> None:
+        """Update the current phase being executed."""
+        self._phase_name = name
+        self._phase_index = index
+        self._phase_total = total
+        self._status = ""
+
+    def set_status(self, status: str) -> None:
+        """Set a free-form status label (e.g. 'Decomposing', 'Summarizing')."""
+        self._status = status
 
     # ── scroll-region helpers ────────────────────────────────────────
 
@@ -236,25 +255,55 @@ class StatusLine:
         now = time.monotonic()
         goal_elapsed = _format_elapsed(now - self._goal_start)
         total_elapsed = _format_elapsed(now - self._total_start)
-        return (
-            f"Goal: {self._goal_name} ({self._goal_index}/{self._goal_total})"
-            f"  Goal Time: {goal_elapsed}"
-            f"  Total Time: {total_elapsed}"
-        )
+        parts: list[str] = [
+            f"Goal: {self._goal_name} ({self._goal_index}/{self._goal_total})",
+        ]
+        if self._phase_name:
+            parts.append(
+                f"Phase: {self._phase_name} ({self._phase_index}/{self._phase_total})"
+            )
+        if self._status:
+            parts.append(self._status)
+        parts.append(f"Goal Time: {goal_elapsed}")
+        parts.append(f"Total Time: {total_elapsed}")
+        return "  ".join(parts)
 
-    # ANSI style: black text on yellow background.
-    _STYLE_ON: str = "\033[30;43m"
-    _STYLE_OFF: str = "\033[0m"
+    @staticmethod
+    def _render_styled_bar(text: str) -> str:
+        """Render *text* as a full-width styled bar using prompt_toolkit HTML.
+
+        Uses ``print_formatted_text`` with a VT100 output so colour definitions
+        live in a single ``<style bg="yellow" fg="black">`` tag rather than
+        hand-written ANSI escape codes.
+        """
+        import io as _io
+
+        from prompt_toolkit.formatted_text import HTML
+        from prompt_toolkit.output.vt100 import Vt100_Output
+        from prompt_toolkit.shortcuts.utils import print_formatted_text
+        from prompt_toolkit.styles import Style
+
+        cols = shutil.get_terminal_size().columns
+        padded = text.ljust(cols)
+        safe = (
+            padded.replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+        )
+        html = HTML(f'<style bg="yellow" fg="black">{safe}</style>')
+        buf = _io.StringIO()
+        output = Vt100_Output(buf, lambda: shutil.get_terminal_size())
+        print_formatted_text(html, output=output, style=Style.from_dict({}))
+        # print_formatted_text appends \r\n; strip it.
+        return buf.getvalue().split("\r\n")[0]
 
     def _write(self) -> None:
         line = self._render()
         if self._scroll_region_active:
             # Write to the reserved bottom row without disturbing main output.
-            cols = shutil.get_terminal_size().columns
-            padded = line.ljust(cols)
+            styled = self._render_styled_bar(line)
             sys.stderr.write(
-                f"\033[s\033[{self._height};1H\033[K"
-                f"{self._STYLE_ON}{padded}{self._STYLE_OFF}\033[u"
+                f"\033[s\033[{self._height};1H\033[K{styled}\033[u"
             )
             sys.stderr.flush()
         else:
@@ -352,6 +401,8 @@ async def run_single(
     # --- Load knowledge index ---
     knowledge_match: dict[str, Any] | None = None
     if config.knowledge_reuse:
+        if status_line:
+            status_line.set_status("Loading knowledge")
         print("Loading knowledge from prior task files...")
         knowledge_index: list[dict[str, Any]] = load_knowledge_index(
             config.tasks_dir, host_restore_fn
@@ -396,6 +447,8 @@ async def run_single(
             print("No task provided.")
             return RunResult()
         print()
+        if status_line:
+            status_line.set_status("Generating task name")
         print("Generating task name...")
         # Call generate_task_name manually to capture the response for tracing
         naming_model = config.get_model("task_naming") or ModelConfig(max_tokens=64)
@@ -471,6 +524,8 @@ async def run_single(
 
     # --- Knowledge matching (run_dir available) ---
     if km_index:
+        if status_line:
+            status_line.set_status("Knowledge matching")
         print("\nFinding relevant knowledge from prior task files...")
         knowledge_match = find_relevant_knowledge(
             prompt, km_index, client,
@@ -496,6 +551,8 @@ async def run_single(
             phases = []
     if not phases:
         print()
+        if status_line:
+            status_line.set_status("Decomposing task")
         print("Decomposing task into phases...")
         phases = decompose_task(
             prompt, config.base_url,
@@ -529,6 +586,8 @@ async def run_single(
     # Route cross-goal observations to relevant phases
     routed_observations: dict[str, list[str | dict[str, str]]] = {}
     if knowledge_match and knowledge_match.get("relevant_observations"):
+        if status_line:
+            status_line.set_status("Routing observations")
         print("Routing observations to phases...")
         routed_observations = route_observations_to_phases(
             knowledge_match["relevant_observations"],
@@ -588,7 +647,9 @@ async def run_single(
     try:
         prior_summaries: list[dict[str, str]] = []
 
-        for phase in phases:
+        for phase_idx, phase in enumerate(phases, 1):
+            if status_line:
+                status_line.set_phase(phase["name"], phase_idx, len(phases))
             cross_obs: list[str | dict[str, str]] | None = (
                 routed_observations.get(phase["name"]) or None
             )
@@ -627,6 +688,8 @@ async def run_single(
             )
             all_screenshots.extend(phase_screenshots)
 
+            if status_line:
+                status_line.set_status("Summarizing")
             log_event(event_log, f"Summarizing phase '{phase['name']}'...")
             summary: str = summarize_phase(
                 phase["name"], phase["task"], result, success,
@@ -711,6 +774,7 @@ async def run_single(
                         )
                         log_event(event_log, f"RETRYING phase '{phase['name']}' with operator hint")
                         if status_line:
+                            status_line.set_status("Retrying")
                             await status_line.start()
                         success, result, phase_screenshots_retry = await run_phase(
                             phase["name"], retry_task, llm, browser,
@@ -718,6 +782,8 @@ async def run_single(
                         )
                         all_screenshots.extend(phase_screenshots_retry)
                         phase_screenshots.extend(phase_screenshots_retry)
+                        if status_line:
+                            status_line.set_status("Summarizing")
                         summary = summarize_phase(
                             phase["name"], phase["task"], result, success,
                             client, config.get_model("summarization"),
@@ -774,6 +840,8 @@ async def run_single(
 
         if all_summaries:
             if goal_path and config.update_summary:
+                if status_line:
+                    status_line.set_status("Generating report")
                 print("\nGenerating task report...")
                 report: dict[str, Any] = generate_task_report(
                     task_name, prompt, all_summaries, client,
@@ -790,6 +858,8 @@ async def run_single(
                 existing_data: dict[str, Any] = json.loads(goal_path.read_text())
                 existing_obs: list[str | dict[str, str]] = existing_data.get("key_observations", [])
                 new_obs: list[str] = report.get("key_observations", [])
+                if status_line:
+                    status_line.set_status("Merging observations")
                 print("Merging observations with existing goal summary...")
                 merged_obs: list[dict[str, str]] = merge_observations(
                     existing_obs, new_obs, client,
@@ -803,6 +873,8 @@ async def run_single(
                     "summary": f"{len(merged_obs)} merged observation(s)",
                     "conversation_file": "llm_merge_observations.json",
                 })
+                if status_line:
+                    status_line.set_status("Classifying observations")
                 print("Classifying observations...")
                 classified_obs: list[dict[str, str]] = classify_observations(
                     prompt, merged_obs, client,
@@ -825,6 +897,8 @@ async def run_single(
                 log_event(event_log, f"Updated goal summary: {goal_path} ({num_errors} errors, {num_warnings} warnings)")
                 print(f"Updated goal summary: {goal_path} ({num_errors} errors, {num_warnings} warnings)")
             elif config.update_summary:
+                if status_line:
+                    status_line.set_status("Generating report")
                 print("\nGenerating task report...")
                 report = generate_task_report(
                     task_name, prompt, all_summaries, client,
@@ -838,6 +912,8 @@ async def run_single(
                     "summary": "Generated task report",
                     "conversation_file": "llm_task_report.json",
                 })
+                if status_line:
+                    status_line.set_status("Classifying observations")
                 print("Classifying observations...")
                 classified_obs = classify_observations(
                     prompt, report.get("key_observations", []), client,
