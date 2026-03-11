@@ -841,7 +841,7 @@ async def run_single(
         if all_summaries:
             if goal_path and config.update_summary:
                 if status_line:
-                    status_line.set_status("Generating report")
+                    status_line.set_status("Generating task report")
                 print("\nGenerating task report...")
                 report: dict[str, Any] = generate_task_report(
                     task_name, prompt, all_summaries, client,
@@ -898,7 +898,7 @@ async def run_single(
                 print(f"Updated goal summary: {goal_path} ({num_errors} errors, {num_warnings} warnings)")
             elif config.update_summary:
                 if status_line:
-                    status_line.set_status("Generating report")
+                    status_line.set_status("Generating task report")
                 print("\nGenerating task report...")
                 report = generate_task_report(
                     task_name, prompt, all_summaries, client,
@@ -970,6 +970,8 @@ async def run_single(
         )
 
         try:
+            if status_line:
+                status_line.set_status("Generating HTML report")
             report_index = generate_report(run_dir)
             print(f"\nHTML report: {report_index}")
             log_event(event_log, f"HTML report generated: {report_index}")
