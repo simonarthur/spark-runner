@@ -273,7 +273,9 @@ def _handle_run(args: list[str], config: SparkConfig) -> None:
     if len(tasks) == 1:
         asyncio.run(run_single(tasks[0], run_config))
     else:
-        asyncio.run(run_multiple(tasks, run_config))
+        # Auto-close browsers between goals so the user isn't prompted
+        multi_config = dataclasses.replace(run_config, auto_close=True)
+        asyncio.run(run_multiple(tasks, multi_config))
 
 
 def _handle_delete(args: list[str], config: SparkConfig) -> None:

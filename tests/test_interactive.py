@@ -309,6 +309,39 @@ class TestDispatch:
         assert "Running 1 goal" in output
         mock_asyncio.run.assert_called_once()
 
+    @patch("spark_runner.orchestrator.run_multiple")
+    @patch("spark_runner.interactive.asyncio")
+    def test_run_multiple_goals_auto_closes_browser(
+        self, mock_asyncio: MagicMock, mock_run_multi: MagicMock,
+        tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        config = _make_config(tmp_path)
+        assert config.goal_summaries_dir is not None
+        _write_goal(config.goal_summaries_dir, "login")
+        _write_goal(config.goal_summaries_dir, "logout")
+        dispatch("run", ["login", "logout"], config, _identity)
+        output = capsys.readouterr().out
+        assert "Running 2 goal" in output
+        mock_run_multi.assert_called_once()
+        passed_config = mock_run_multi.call_args[0][1]
+        assert passed_config.auto_close is True
+        # Original config unchanged
+        assert config.auto_close is False
+
+    @patch("spark_runner.orchestrator.run_single")
+    @patch("spark_runner.interactive.asyncio")
+    def test_run_single_goal_preserves_auto_close(
+        self, mock_asyncio: MagicMock, mock_run: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        config = _make_config(tmp_path)
+        assert config.goal_summaries_dir is not None
+        _write_goal(config.goal_summaries_dir, "login")
+        dispatch("run", ["login"], config, _identity)
+        mock_run.assert_called_once()
+        passed_config = mock_run.call_args[0][1]
+        assert passed_config.auto_close is False
+
     @patch("spark_runner.orchestrator.run_single")
     @patch("spark_runner.interactive.asyncio")
     def test_run_no_update_summary_flag(
