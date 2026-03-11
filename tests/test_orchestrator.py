@@ -416,6 +416,8 @@ class TestStatusLine:
             assert "\033[K" in teardown_written
             # Reset scroll region
             assert "\033[r" in teardown_written
+            # Cursor repositioned to last content row
+            assert "\033[23;1H" in teardown_written
 
     def test_teardown_is_idempotent(self) -> None:
         """Calling teardown twice should not error."""

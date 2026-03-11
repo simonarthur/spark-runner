@@ -238,6 +238,8 @@ class StatusLine:
         sys.stderr.write(f"\033[{self._height};1H\033[K")
         # Reset scroll region to full terminal.
         sys.stderr.write("\033[r")
+        # \033[r resets cursor to home (row 1). Move back to the last content row.
+        sys.stderr.write(f"\033[{self._height - 1};1H")
         sys.stderr.flush()
         self._scroll_region_active = False
 
