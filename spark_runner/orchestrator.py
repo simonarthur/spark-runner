@@ -4,16 +4,22 @@ from __future__ import annotations
 
 import asyncio
 import atexit
+import contextvars
 import json
 import os
 import shutil
-import signal
 import sys
 import tempfile
+import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Awaitable, Callable
+
+from prompt_toolkit.application import Application, get_app_session
+from prompt_toolkit.input.defaults import create_pipe_input
+from prompt_toolkit.layout import Layout, Window, FormattedTextControl
+from prompt_toolkit.patch_stdout import patch_stdout
 
 import anthropic
 from browser_use import Browser, ChatBrowserUse
@@ -166,11 +172,12 @@ def _format_elapsed(seconds: float) -> str:
 
 
 class StatusLine:
-    """Async helper that prints a periodically-refreshed status line to stderr.
+    """Async helper that displays a periodically-refreshed status line on stderr.
 
-    On TTY terminals, reserves the bottom row using ANSI scroll regions so that
-    normal ``print()`` output scrolls above a fixed status bar.  Falls back to
-    the simple ``\\r`` overwrite approach when stderr is not a TTY.
+    On TTY terminals, uses a prompt_toolkit ``Application`` running in a
+    background thread with ``patch_stdout`` so that normal ``print()`` output
+    scrolls above a fixed status bar.  Falls back to the simple ``\\r``
+    overwrite approach when stderr is not a TTY.
     """
 
     def __init__(self) -> None:
@@ -183,13 +190,16 @@ class StatusLine:
         self._phase_index: int = 0
         self._phase_total: int = 0
         self._status: str = ""
-        self._task: asyncio.Task[None] | None = None
-        self._last_width: int = 0
-        # TTY / scroll-region state
         self._is_tty: bool = sys.stderr.isatty()
-        self._height: int = 0
-        self._scroll_region_active: bool = False
-        self._old_sigwinch: Any = None
+        self._last_width: int = 0  # non-TTY fallback only
+        # prompt_toolkit state (TTY only)
+        self._app: Application[None] | None = None
+        self._thread: threading.Thread | None = None
+        self._app_started: threading.Event = threading.Event()
+        self._patch_context: Any = None
+        self._visible: bool = True
+        # non-TTY state
+        self._task: asyncio.Task[None] | None = None
 
     def set_goal(self, name: str, index: int, total: int) -> None:
         """Update the current goal being run."""
@@ -213,44 +223,6 @@ class StatusLine:
         """Set a free-form status label (e.g. 'Decomposing', 'Summarizing')."""
         self._status = status
 
-    # ── scroll-region helpers ────────────────────────────────────────
-
-    def _setup_scroll_region(self) -> None:
-        """Reserve the bottom terminal line using ANSI escape sequences."""
-        if not self._is_tty:
-            return
-        size = shutil.get_terminal_size()
-        self._height = size.lines
-        if self._height < 2:
-            return
-        # Set scroll region to rows 1..(h-1), excluding the last row.
-        sys.stderr.write(f"\033[1;{self._height - 1}r")
-        # Move cursor into the scrollable area.
-        sys.stderr.write(f"\033[{self._height - 1};1H")
-        sys.stderr.flush()
-        self._scroll_region_active = True
-
-    def _teardown_scroll_region(self) -> None:
-        """Reset the scroll region and clear the reserved bottom row."""
-        if not self._scroll_region_active:
-            return
-        # Clear the bottom row.
-        sys.stderr.write(f"\033[{self._height};1H\033[K")
-        # Reset scroll region to full terminal.
-        sys.stderr.write("\033[r")
-        # \033[r resets cursor to home (row 1). Move back to the last content row.
-        sys.stderr.write(f"\033[{self._height - 1};1H")
-        sys.stderr.flush()
-        self._scroll_region_active = False
-
-    def _handle_resize(self, signum: int = 0, frame: Any = None) -> None:
-        """Re-establish the scroll region after a terminal resize."""
-        if not self._is_tty:
-            return
-        self._teardown_scroll_region()
-        self._setup_scroll_region()
-        self._write()
-
     # ── rendering ────────────────────────────────────────────────────
 
     def _render(self) -> str:
@@ -270,64 +242,30 @@ class StatusLine:
         parts.append(f"Total Time: {total_elapsed}")
         return "  ".join(parts)
 
-    @staticmethod
-    def _render_styled_bar(text: str) -> str:
-        """Render *text* as a full-width styled bar using prompt_toolkit HTML.
-
-        Uses ``print_formatted_text`` with a VT100 output so colour definitions
-        live in a single ``<style bg="yellow" fg="black">`` tag rather than
-        hand-written ANSI escape codes.
-        """
-        import io as _io
-
-        from prompt_toolkit.formatted_text import HTML
-        from prompt_toolkit.output.vt100 import Vt100_Output
-        from prompt_toolkit.shortcuts.utils import print_formatted_text
-        from prompt_toolkit.styles import Style
-
-        cols = shutil.get_terminal_size().columns
-        padded = text.ljust(cols)
-        safe = (
-            padded.replace("&", "&amp;")
-            .replace("<", "&lt;")
-            .replace(">", "&gt;")
-        )
-        html = HTML(f'<style bg="yellow" fg="black">{safe}</style>')
-        buf = _io.StringIO()
-        output = Vt100_Output(buf, lambda: shutil.get_terminal_size())
-        print_formatted_text(html, output=output, style=Style.from_dict({}))
-        # print_formatted_text appends \r\n; strip it.
-        return buf.getvalue().split("\r\n")[0]
+    def _get_toolbar_text(self) -> str:
+        """Callable used by ``FormattedTextControl`` to get toolbar content."""
+        return self._render() if self._visible else ""
 
     def _write(self) -> None:
+        """Write status line using non-TTY ``\\r`` overwrite fallback."""
         line = self._render()
-        if self._scroll_region_active:
-            # Write to the reserved bottom row without disturbing main output.
-            styled = self._render_styled_bar(line)
-            sys.stderr.write(
-                f"\033[s\033[{self._height};1H\033[K{styled}\033[u"
-            )
-            sys.stderr.flush()
-        else:
-            # Fallback: simple carriage-return overwrite.
-            padded = line.ljust(self._last_width)
-            self._last_width = len(line)
-            sys.stderr.write(f"\r{padded}")
-            sys.stderr.flush()
+        padded = line.ljust(self._last_width)
+        self._last_width = len(line)
+        sys.stderr.write(f"\r{padded}")
+        sys.stderr.flush()
 
     def clear(self) -> None:
         """Erase the status line."""
-        if self._scroll_region_active:
-            sys.stderr.write(
-                f"\033[s\033[{self._height};1H\033[K\033[u"
-            )
-            sys.stderr.flush()
+        if self._app is not None:
+            self._visible = False
+            self._app.invalidate()
         elif self._last_width:
             sys.stderr.write("\r" + " " * self._last_width + "\r")
             sys.stderr.flush()
             self._last_width = 0
 
     async def _loop(self) -> None:
+        """Non-TTY refresh loop."""
         try:
             while True:
                 self._write()
@@ -335,18 +273,60 @@ class StatusLine:
         except asyncio.CancelledError:
             self.clear()
 
+    def _atexit_cleanup(self) -> None:
+        """Best-effort cleanup registered with atexit."""
+        if self._patch_context is not None:
+            try:
+                self._patch_context.__exit__(None, None, None)
+            except Exception:
+                pass
+            self._patch_context = None
+        if self._app is not None and self._app.is_running and self._app.loop is not None:
+            self._app.loop.call_soon_threadsafe(self._app.exit)
+
     async def start(self) -> None:
         """Begin the background refresh loop."""
-        self._setup_scroll_region()
-        # Register SIGWINCH handler for terminal resizes (Unix only).
-        if hasattr(signal, "SIGWINCH"):
-            self._old_sigwinch = signal.getsignal(signal.SIGWINCH)
-            signal.signal(signal.SIGWINCH, self._handle_resize)
-        atexit.register(self._teardown_scroll_region)
-        self._task = asyncio.create_task(self._loop())
+        if not self._is_tty:
+            self._task = asyncio.create_task(self._loop())
+            return
+
+        # Build layout: single 1-line toolbar window
+        toolbar = Window(
+            FormattedTextControl(text=self._get_toolbar_text),
+            height=1,
+            style="bg:ansiyellow fg:ansiblack",
+        )
+
+        pipe_input = create_pipe_input()
+        self._app = Application(
+            layout=Layout(toolbar),
+            output=get_app_session().output,
+            input=pipe_input,
+            refresh_interval=1.0,
+            erase_when_done=True,
+        )
+        self._app_started = threading.Event()
+
+        def run() -> None:
+            try:
+                self._app.run(pre_run=self._app_started.set)
+            except BaseException:
+                pass
+
+        ctx = contextvars.copy_context()
+        self._thread = threading.Thread(target=ctx.run, args=(run,), daemon=True)
+        self._thread.start()
+
+        await asyncio.to_thread(self._app_started.wait)
+
+        # Patch stdout/stderr so print() goes above toolbar
+        self._patch_context = patch_stdout(raw=True)
+        self._patch_context.__enter__()
+
+        atexit.register(self._atexit_cleanup)
 
     async def stop(self) -> None:
-        """Cancel the refresh loop and clean up the scroll region."""
+        """Cancel the refresh loop and clean up."""
         if self._task is not None:
             self._task.cancel()
             try:
@@ -354,11 +334,22 @@ class StatusLine:
             except asyncio.CancelledError:
                 pass
             self._task = None
-        # Restore SIGWINCH handler.
-        if hasattr(signal, "SIGWINCH") and self._old_sigwinch is not None:
-            signal.signal(signal.SIGWINCH, self._old_sigwinch)
-            self._old_sigwinch = None
-        self._teardown_scroll_region()
+            return
+
+        # Restore stdout/stderr
+        if self._patch_context is not None:
+            self._patch_context.__exit__(None, None, None)
+            self._patch_context = None
+
+        # Exit the Application
+        if self._app is not None and self._app.is_running and self._app.loop is not None:
+            self._app.loop.call_soon_threadsafe(self._app.exit)
+
+        if self._thread is not None:
+            await asyncio.to_thread(self._thread.join)
+            self._thread = None
+
+        atexit.unregister(self._atexit_cleanup)
 
 
 async def run_single(

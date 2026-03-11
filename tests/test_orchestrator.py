@@ -325,7 +325,9 @@ class TestStatusLine:
 
     @pytest.mark.asyncio
     async def test_start_and_stop(self) -> None:
+        """Non-TTY start/stop uses asyncio task."""
         sl = StatusLine()
+        sl._is_tty = False
         sl.set_goal("test", 1, 1)
         await sl.start()
         assert sl._task is not None
@@ -339,42 +341,17 @@ class TestStatusLine:
         await sl.stop()  # Should not raise
 
     def test_clear_resets_width(self) -> None:
+        """Non-TTY clear resets _last_width."""
         sl = StatusLine()
+        sl._is_tty = False
         sl._last_width = 50
         sl.clear()
         assert sl._last_width == 0
-
-    def test_write_uses_scroll_region_on_tty(self) -> None:
-        """When stderr is a TTY, _write should use ANSI cursor positioning with styling."""
-        sl = StatusLine()
-        sl._is_tty = True
-        sl._scroll_region_active = True
-        sl._height = 24
-        sl.set_goal("login", 1, 1)
-        with (
-            patch.object(sys, "stderr") as mock_stderr,
-            patch("shutil.get_terminal_size", return_value=MagicMock(lines=24, columns=80)),
-        ):
-            mock_stderr.isatty.return_value = True
-            sl._write()
-            written = "".join(
-                call.args[0] for call in mock_stderr.write.call_args_list
-            )
-            # Should contain save cursor, move to bottom row, clear line, restore cursor
-            assert "\033[s" in written
-            assert "\033[24;1H" in written
-            assert "\033[K" in written
-            assert "\033[u" in written
-            # Should have prompt_toolkit-rendered styling (256-color yellow bg, black fg)
-            assert "48;5;226" in written   # yellow background
-            assert "38;5;16" in written    # black foreground
-            assert "\033[0m" in written
 
     def test_write_falls_back_on_non_tty(self) -> None:
         """When stderr is not a TTY, _write should use \\r fallback."""
         sl = StatusLine()
         sl._is_tty = False
-        sl._scroll_region_active = False
         sl.set_goal("login", 1, 1)
         with patch.object(sys, "stderr") as mock_stderr:
             mock_stderr.isatty.return_value = False
@@ -385,89 +362,53 @@ class TestStatusLine:
             assert written.startswith("\r")
             assert "\033[s" not in written
 
-    def test_setup_teardown_scroll_region(self) -> None:
-        """Verify exact ANSI codes for setup and teardown."""
+    def test_get_toolbar_text_returns_render(self) -> None:
+        """_get_toolbar_text returns _render() output when visible."""
         sl = StatusLine()
-        sl._is_tty = True
-        with (
-            patch.object(sys, "stderr") as mock_stderr,
-            patch("shutil.get_terminal_size", return_value=MagicMock(lines=24, columns=80)),
-        ):
-            mock_stderr.isatty.return_value = True
-            sl._setup_scroll_region()
-            assert sl._scroll_region_active is True
-            assert sl._height == 24
-            setup_written = "".join(
-                call.args[0] for call in mock_stderr.write.call_args_list
-            )
-            # Set scroll region to rows 1..23
-            assert "\033[1;23r" in setup_written
-            # Move cursor into scrollable area
-            assert "\033[23;1H" in setup_written
-
-            mock_stderr.reset_mock()
-            sl._teardown_scroll_region()
-            assert sl._scroll_region_active is False
-            teardown_written = "".join(
-                call.args[0] for call in mock_stderr.write.call_args_list
-            )
-            # Clear bottom row
-            assert "\033[24;1H" in teardown_written
-            assert "\033[K" in teardown_written
-            # Reset scroll region
-            assert "\033[r" in teardown_written
-            # Cursor repositioned to last content row
-            assert "\033[23;1H" in teardown_written
-
-    def test_teardown_is_idempotent(self) -> None:
-        """Calling teardown twice should not error."""
-        sl = StatusLine()
-        sl._is_tty = True
-        sl._scroll_region_active = False
-        # Should be a no-op when not active
-        sl._teardown_scroll_region()
-        sl._teardown_scroll_region()
-        assert sl._scroll_region_active is False
-
-    def test_clear_on_tty_clears_bottom_row(self) -> None:
-        """clear() should position cursor at bottom row and clear when scroll region is active."""
-        sl = StatusLine()
-        sl._is_tty = True
-        sl._scroll_region_active = True
-        sl._height = 30
-        with patch.object(sys, "stderr") as mock_stderr:
-            sl.clear()
-            written = "".join(
-                call.args[0] for call in mock_stderr.write.call_args_list
-            )
-            assert "\033[s" in written
-            assert "\033[30;1H" in written
-            assert "\033[K" in written
-            assert "\033[u" in written
-
-    def test_resize_updates_scroll_region(self) -> None:
-        """_handle_resize should teardown old region and setup new one."""
-        sl = StatusLine()
-        sl._is_tty = True
-        sl._scroll_region_active = True
-        sl._height = 24
         sl.set_goal("login", 1, 1)
-        with (
-            patch.object(sys, "stderr") as mock_stderr,
-            patch("shutil.get_terminal_size", return_value=MagicMock(lines=30, columns=80)),
-        ):
-            mock_stderr.isatty.return_value = True
-            sl._handle_resize()
-            assert sl._height == 30
-            assert sl._scroll_region_active is True
-            written = "".join(
-                call.args[0] for call in mock_stderr.write.call_args_list
-            )
-            # Teardown old: clear row 24 and reset
-            assert "\033[24;1H" in written
-            assert "\033[r" in written
-            # Setup new: set scroll region 1..29
-            assert "\033[1;29r" in written
+        text = sl._get_toolbar_text()
+        assert "Goal: login (1/1)" in text
+
+    def test_get_toolbar_text_returns_empty_when_not_visible(self) -> None:
+        """_get_toolbar_text returns empty string when not visible."""
+        sl = StatusLine()
+        sl.set_goal("login", 1, 1)
+        sl._visible = False
+        assert sl._get_toolbar_text() == ""
+
+    def test_clear_sets_invisible_on_tty(self) -> None:
+        """clear() sets _visible to False and calls invalidate when app exists."""
+        sl = StatusLine()
+        sl._app = MagicMock()
+        sl.clear()
+        assert sl._visible is False
+        sl._app.invalidate.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_start_creates_thread_on_tty(self) -> None:
+        """On TTY, start() creates a background thread and sets up app state."""
+        sl = StatusLine()
+        sl._is_tty = True
+        sl.set_goal("test", 1, 1)
+        await sl.start()
+        try:
+            assert sl._thread is not None
+            assert sl._app is not None
+            assert sl._app_started.is_set()
+            assert sl._patch_context is not None
+        finally:
+            await sl.stop()
+
+    @pytest.mark.asyncio
+    async def test_stop_joins_thread(self) -> None:
+        """stop() joins the thread and cleans up state."""
+        sl = StatusLine()
+        sl._is_tty = True
+        sl.set_goal("test", 1, 1)
+        await sl.start()
+        await sl.stop()
+        assert sl._thread is None
+        assert sl._patch_context is None
 
 
 class TestPhaseFailureCallback:
