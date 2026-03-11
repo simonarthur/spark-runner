@@ -119,7 +119,7 @@ IMPORTANT RULES:
 - Each phase should be a self-contained step with clear success criteria.
 - Write the task instructions as explicit, step-by-step directions for an AI agent controlling a browser.
 - Every phase must start with ALL of these paragraphs (copy them verbatim):
-    "If the correct user is logged in, there is not need to log in again. A login phase should be considered a SUCCESS in this state."
+    "If the correct user is logged in, do not log in again. A login phase should be considered a SUCCESS in this state."
     "IMPORTANT: Before doing anything else, check whether this phase's goal has ALREADY been achieved by a prior phase (e.g. the expected UI state is already visible). If so, report success immediately without taking any actions."
     "Check for error popup/toast after every action. Report any deviations from expected behavior."
     "If you cannot find an expected UI element after reasonable exploration (scrolling, waiting for load), do NOT keep retrying the same approaches and do NOT switch to a different mechanism. Report what you found, note the missing element, and FAIL the phase."
