@@ -5,15 +5,49 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import shlex
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
 from prompt_toolkit import PromptSession
 from prompt_toolkit.completion import Completer, Completion
 from prompt_toolkit.document import Document
+from prompt_toolkit.formatted_text import HTML
 from prompt_toolkit.history import FileHistory
 
 from spark_runner.models import SparkConfig
+
+
+# ── Toolbar state ─────────────────────────────────────────────────────
+
+
+@dataclass
+class _ToolbarState:
+    """Mutable state driving the prompt_toolkit bottom toolbar."""
+
+    goal_count: int = 0
+    last_run_name: str = ""
+    last_run_status: str = ""  # "PASS", "FAIL", or ""
+
+
+_toolbar_state = _ToolbarState()
+
+
+def _bottom_toolbar() -> HTML:
+    """Return styled text for the prompt_toolkit bottom toolbar."""
+    parts: list[str] = []
+    if _toolbar_state.goal_count:
+        parts.append(f"{_toolbar_state.goal_count} goal(s)")
+    if _toolbar_state.last_run_name:
+        status = _toolbar_state.last_run_status
+        style = "green" if status == "PASS" else "red"
+        parts.append(
+            f'Last: {_toolbar_state.last_run_name} '
+            f'<style fg="{style}">{status}</style>'
+        )
+    if not parts:
+        parts.append("Ready")
+    return HTML("  |  ".join(parts))
 
 
 # ── Commands ─────────────────────────────────────────────────────────
@@ -302,14 +336,25 @@ def _handle_run(args: list[str], config: SparkConfig) -> None:
     callback = _phase_failure_callback if enable_hints else None
 
     print(f"Running {len(tasks)} goal(s)...\n")
+    from spark_runner.models import RunResult
     from spark_runner.orchestrator import run_multiple, run_single
 
     if len(tasks) == 1:
-        asyncio.run(run_single(tasks[0], run_config, on_phase_failure=callback))
+        result: RunResult = asyncio.run(
+            run_single(tasks[0], run_config, on_phase_failure=callback)
+        )
+        _toolbar_state.last_run_name = result.task_name
+        _toolbar_state.last_run_status = "PASS" if result.all_phases_succeeded else "FAIL"
     else:
         # Auto-close browsers between goals so the user isn't prompted
         multi_config = dataclasses.replace(run_config, auto_close=True)
-        asyncio.run(run_multiple(tasks, multi_config, on_phase_failure=callback))
+        results: list[RunResult] = asyncio.run(
+            run_multiple(tasks, multi_config, on_phase_failure=callback)
+        )
+        if results:
+            last = results[-1]
+            _toolbar_state.last_run_name = last.task_name
+            _toolbar_state.last_run_status = "PASS" if last.all_phases_succeeded else "FAIL"
 
 
 def _handle_delete(args: list[str], config: SparkConfig) -> None:
@@ -474,6 +519,15 @@ def _handle_orphans(args: list[str], config: SparkConfig) -> None:
 # ── Main loop ────────────────────────────────────────────────────────
 
 
+def _refresh_toolbar_goal_count(config: SparkConfig) -> None:
+    """Update the toolbar goal count from the goal summaries directory."""
+    gs_dir = config.goal_summaries_dir
+    if gs_dir is not None and gs_dir.exists():
+        _toolbar_state.goal_count = len(list(gs_dir.glob("*-task.json")))
+    else:
+        _toolbar_state.goal_count = 0
+
+
 def interactive_loop(config: SparkConfig) -> None:
     """Run the interactive REPL."""
     from spark_runner.orchestrator import _make_restore_fn
@@ -482,10 +536,13 @@ def interactive_loop(config: SparkConfig) -> None:
     assert config.goal_summaries_dir is not None
     assert config.tasks_dir is not None
 
+    _refresh_toolbar_goal_count(config)
+
     history_path = config.data_dir / ".repl_history"
     session: PromptSession[str] = PromptSession(
         completer=SparkCompleter(config),
         history=FileHistory(str(history_path)),
+        bottom_toolbar=_bottom_toolbar,
     )
 
     print("Spark Runner interactive mode. Type 'help' for commands, Ctrl-D to exit.\n")
@@ -507,3 +564,6 @@ def interactive_loop(config: SparkConfig) -> None:
                 break
         except Exception as exc:  # noqa: BLE001
             print(f"Error: {exc}")
+
+        # Refresh toolbar state after every command.
+        _refresh_toolbar_goal_count(config)

@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import atexit
 import json
+import os
 import shutil
+import signal
 import sys
 import tempfile
 import time
@@ -165,8 +168,9 @@ def _format_elapsed(seconds: float) -> str:
 class StatusLine:
     """Async helper that prints a periodically-refreshed status line to stderr.
 
-    The line is cleared before each normal ``print()`` so it doesn't interfere
-    with regular output.
+    On TTY terminals, reserves the bottom row using ANSI scroll regions so that
+    normal ``print()`` output scrolls above a fixed status bar.  Falls back to
+    the simple ``\\r`` overwrite approach when stderr is not a TTY.
     """
 
     def __init__(self) -> None:
@@ -177,6 +181,11 @@ class StatusLine:
         self._goal_total: int = 0
         self._task: asyncio.Task[None] | None = None
         self._last_width: int = 0
+        # TTY / scroll-region state
+        self._is_tty: bool = sys.stderr.isatty()
+        self._height: int = 0
+        self._scroll_region_active: bool = False
+        self._old_sigwinch: Any = None
 
     def set_goal(self, name: str, index: int, total: int) -> None:
         """Update the current goal being run."""
@@ -184,6 +193,44 @@ class StatusLine:
         self._goal_index = index
         self._goal_total = total
         self._goal_start = time.monotonic()
+
+    # ── scroll-region helpers ────────────────────────────────────────
+
+    def _setup_scroll_region(self) -> None:
+        """Reserve the bottom terminal line using ANSI escape sequences."""
+        if not self._is_tty:
+            return
+        size = shutil.get_terminal_size()
+        self._height = size.lines
+        if self._height < 2:
+            return
+        # Set scroll region to rows 1..(h-1), excluding the last row.
+        sys.stderr.write(f"\033[1;{self._height - 1}r")
+        # Move cursor into the scrollable area.
+        sys.stderr.write(f"\033[{self._height - 1};1H")
+        sys.stderr.flush()
+        self._scroll_region_active = True
+
+    def _teardown_scroll_region(self) -> None:
+        """Reset the scroll region and clear the reserved bottom row."""
+        if not self._scroll_region_active:
+            return
+        # Clear the bottom row.
+        sys.stderr.write(f"\033[{self._height};1H\033[K")
+        # Reset scroll region to full terminal.
+        sys.stderr.write("\033[r")
+        sys.stderr.flush()
+        self._scroll_region_active = False
+
+    def _handle_resize(self, signum: int = 0, frame: Any = None) -> None:
+        """Re-establish the scroll region after a terminal resize."""
+        if not self._is_tty:
+            return
+        self._teardown_scroll_region()
+        self._setup_scroll_region()
+        self._write()
+
+    # ── rendering ────────────────────────────────────────────────────
 
     def _render(self) -> str:
         now = time.monotonic()
@@ -197,15 +244,27 @@ class StatusLine:
 
     def _write(self) -> None:
         line = self._render()
-        # Pad to overwrite previous content, then carriage-return
-        padded = line.ljust(self._last_width)
-        self._last_width = len(line)
-        sys.stderr.write(f"\r{padded}")
-        sys.stderr.flush()
+        if self._scroll_region_active:
+            # Write to the reserved bottom row without disturbing main output.
+            sys.stderr.write(
+                f"\033[s\033[{self._height};1H\033[K{line}\033[u"
+            )
+            sys.stderr.flush()
+        else:
+            # Fallback: simple carriage-return overwrite.
+            padded = line.ljust(self._last_width)
+            self._last_width = len(line)
+            sys.stderr.write(f"\r{padded}")
+            sys.stderr.flush()
 
     def clear(self) -> None:
         """Erase the status line."""
-        if self._last_width:
+        if self._scroll_region_active:
+            sys.stderr.write(
+                f"\033[s\033[{self._height};1H\033[K\033[u"
+            )
+            sys.stderr.flush()
+        elif self._last_width:
             sys.stderr.write("\r" + " " * self._last_width + "\r")
             sys.stderr.flush()
             self._last_width = 0
@@ -220,10 +279,16 @@ class StatusLine:
 
     async def start(self) -> None:
         """Begin the background refresh loop."""
+        self._setup_scroll_region()
+        # Register SIGWINCH handler for terminal resizes (Unix only).
+        if hasattr(signal, "SIGWINCH"):
+            self._old_sigwinch = signal.getsignal(signal.SIGWINCH)
+            signal.signal(signal.SIGWINCH, self._handle_resize)
+        atexit.register(self._teardown_scroll_region)
         self._task = asyncio.create_task(self._loop())
 
     async def stop(self) -> None:
-        """Cancel the refresh loop and clear the line."""
+        """Cancel the refresh loop and clean up the scroll region."""
         if self._task is not None:
             self._task.cancel()
             try:
@@ -231,6 +296,11 @@ class StatusLine:
             except asyncio.CancelledError:
                 pass
             self._task = None
+        # Restore SIGWINCH handler.
+        if hasattr(signal, "SIGWINCH") and self._old_sigwinch is not None:
+            signal.signal(signal.SIGWINCH, self._old_sigwinch)
+            self._old_sigwinch = None
+        self._teardown_scroll_region()
 
 
 async def run_single(

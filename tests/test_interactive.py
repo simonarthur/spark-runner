@@ -558,6 +558,95 @@ class TestInteractiveLoop:
         assert isinstance(history, FileHistory)
         assert history.filename == str(config.data_dir / ".repl_history")
 
+    @patch("spark_runner.interactive.PromptSession")
+    @patch("spark_runner.orchestrator._make_restore_fn", return_value=_identity)
+    def test_prompt_session_has_bottom_toolbar(
+        self, mock_restore: MagicMock, mock_session_cls: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        from spark_runner.interactive import _bottom_toolbar, interactive_loop
+
+        config = _make_config(tmp_path)
+        mock_session = MagicMock()
+        mock_session.prompt.side_effect = EOFError
+        mock_session_cls.return_value = mock_session
+
+        interactive_loop(config)
+
+        call_kwargs = mock_session_cls.call_args[1]
+        assert call_kwargs["bottom_toolbar"] is _bottom_toolbar
+
+
+# ── toolbar ──────────────────────────────────────────────────────────
+
+
+class TestBottomToolbar:
+    def test_toolbar_shows_ready_when_empty(self) -> None:
+        from spark_runner.interactive import _ToolbarState, _bottom_toolbar, _toolbar_state
+
+        # Reset state
+        _toolbar_state.goal_count = 0
+        _toolbar_state.last_run_name = ""
+        _toolbar_state.last_run_status = ""
+
+        result = _bottom_toolbar()
+        assert "Ready" in result.value
+
+    def test_toolbar_shows_goal_count(self) -> None:
+        from spark_runner.interactive import _bottom_toolbar, _toolbar_state
+
+        _toolbar_state.goal_count = 5
+        _toolbar_state.last_run_name = ""
+        _toolbar_state.last_run_status = ""
+
+        result = _bottom_toolbar()
+        assert "5 goal(s)" in result.value
+        assert "Ready" not in result.value
+
+    def test_toolbar_shows_last_run(self) -> None:
+        from spark_runner.interactive import _bottom_toolbar, _toolbar_state
+
+        _toolbar_state.goal_count = 3
+        _toolbar_state.last_run_name = "login"
+        _toolbar_state.last_run_status = "PASS"
+
+        result = _bottom_toolbar()
+        assert "login" in result.value
+        assert "PASS" in result.value
+        assert "3 goal(s)" in result.value
+
+    def test_toolbar_shows_fail_status(self) -> None:
+        from spark_runner.interactive import _bottom_toolbar, _toolbar_state
+
+        _toolbar_state.goal_count = 0
+        _toolbar_state.last_run_name = "signup"
+        _toolbar_state.last_run_status = "FAIL"
+
+        result = _bottom_toolbar()
+        assert "signup" in result.value
+        assert "FAIL" in result.value
+
+    @patch("spark_runner.orchestrator.run_single")
+    @patch("spark_runner.interactive.asyncio")
+    def test_run_updates_toolbar_state(
+        self, mock_asyncio: MagicMock, mock_run: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        from spark_runner.interactive import _toolbar_state
+        from spark_runner.models import RunResult
+
+        config = _make_config(tmp_path)
+        assert config.goal_summaries_dir is not None
+        _write_goal(config.goal_summaries_dir, "login")
+
+        mock_result = RunResult(task_name="login", phases=[], screenshots=[])
+        mock_asyncio.run.return_value = mock_result
+
+        dispatch("run", ["login"], config, _identity)
+
+        assert _toolbar_state.last_run_name == "login"
+        assert _toolbar_state.last_run_status == "PASS"
+
 
 # ── hint commands ────────────────────────────────────────────────────
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -298,6 +299,122 @@ class TestStatusLine:
         sl._last_width = 50
         sl.clear()
         assert sl._last_width == 0
+
+    def test_write_uses_scroll_region_on_tty(self) -> None:
+        """When stderr is a TTY, _write should use ANSI cursor positioning."""
+        sl = StatusLine()
+        sl._is_tty = True
+        sl._scroll_region_active = True
+        sl._height = 24
+        sl.set_goal("login", 1, 1)
+        with patch.object(sys, "stderr") as mock_stderr:
+            mock_stderr.isatty.return_value = True
+            sl._write()
+            written = "".join(
+                call.args[0] for call in mock_stderr.write.call_args_list
+            )
+            # Should contain save cursor, move to bottom row, clear line, restore cursor
+            assert "\033[s" in written
+            assert "\033[24;1H" in written
+            assert "\033[K" in written
+            assert "\033[u" in written
+
+    def test_write_falls_back_on_non_tty(self) -> None:
+        """When stderr is not a TTY, _write should use \\r fallback."""
+        sl = StatusLine()
+        sl._is_tty = False
+        sl._scroll_region_active = False
+        sl.set_goal("login", 1, 1)
+        with patch.object(sys, "stderr") as mock_stderr:
+            mock_stderr.isatty.return_value = False
+            sl._write()
+            written = "".join(
+                call.args[0] for call in mock_stderr.write.call_args_list
+            )
+            assert written.startswith("\r")
+            assert "\033[s" not in written
+
+    def test_setup_teardown_scroll_region(self) -> None:
+        """Verify exact ANSI codes for setup and teardown."""
+        sl = StatusLine()
+        sl._is_tty = True
+        with (
+            patch.object(sys, "stderr") as mock_stderr,
+            patch("shutil.get_terminal_size", return_value=MagicMock(lines=24, columns=80)),
+        ):
+            mock_stderr.isatty.return_value = True
+            sl._setup_scroll_region()
+            assert sl._scroll_region_active is True
+            assert sl._height == 24
+            setup_written = "".join(
+                call.args[0] for call in mock_stderr.write.call_args_list
+            )
+            # Set scroll region to rows 1..23
+            assert "\033[1;23r" in setup_written
+            # Move cursor into scrollable area
+            assert "\033[23;1H" in setup_written
+
+            mock_stderr.reset_mock()
+            sl._teardown_scroll_region()
+            assert sl._scroll_region_active is False
+            teardown_written = "".join(
+                call.args[0] for call in mock_stderr.write.call_args_list
+            )
+            # Clear bottom row
+            assert "\033[24;1H" in teardown_written
+            assert "\033[K" in teardown_written
+            # Reset scroll region
+            assert "\033[r" in teardown_written
+
+    def test_teardown_is_idempotent(self) -> None:
+        """Calling teardown twice should not error."""
+        sl = StatusLine()
+        sl._is_tty = True
+        sl._scroll_region_active = False
+        # Should be a no-op when not active
+        sl._teardown_scroll_region()
+        sl._teardown_scroll_region()
+        assert sl._scroll_region_active is False
+
+    def test_clear_on_tty_clears_bottom_row(self) -> None:
+        """clear() should position cursor at bottom row and clear when scroll region is active."""
+        sl = StatusLine()
+        sl._is_tty = True
+        sl._scroll_region_active = True
+        sl._height = 30
+        with patch.object(sys, "stderr") as mock_stderr:
+            sl.clear()
+            written = "".join(
+                call.args[0] for call in mock_stderr.write.call_args_list
+            )
+            assert "\033[s" in written
+            assert "\033[30;1H" in written
+            assert "\033[K" in written
+            assert "\033[u" in written
+
+    def test_resize_updates_scroll_region(self) -> None:
+        """_handle_resize should teardown old region and setup new one."""
+        sl = StatusLine()
+        sl._is_tty = True
+        sl._scroll_region_active = True
+        sl._height = 24
+        sl.set_goal("login", 1, 1)
+        with (
+            patch.object(sys, "stderr") as mock_stderr,
+            patch("shutil.get_terminal_size", return_value=MagicMock(lines=30, columns=80)),
+        ):
+            mock_stderr.isatty.return_value = True
+            sl._handle_resize()
+            assert sl._height == 30
+            assert sl._scroll_region_active is True
+            written = "".join(
+                call.args[0] for call in mock_stderr.write.call_args_list
+            )
+            # Teardown old: clear row 24 and reset
+            assert "\033[24;1H" in written
+            assert "\033[r" in written
+            # Setup new: set scroll region 1..29
+            assert "\033[1;29r" in written
 
 
 class TestPhaseFailureCallback:
