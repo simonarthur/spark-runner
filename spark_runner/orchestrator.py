@@ -614,7 +614,7 @@ async def run_single(
                 retried: bool = False
                 if on_phase_failure is not None:
                     if status_line:
-                        status_line.clear()
+                        await status_line.stop()
                     error_summary: str = result.final_result() or "Phase failed"
                     hint_text: str | None = await on_phase_failure(phase["name"], error_summary)
                     if hint_text:
