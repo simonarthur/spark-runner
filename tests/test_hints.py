@@ -12,6 +12,7 @@ from spark_runner.goals import (
     get_reset_phases,
     load_hints,
     remove_hint,
+    reset_errored_phases,
     reset_phase,
     save_hint,
     unreset_phase,
@@ -207,3 +208,83 @@ class TestResetPhase:
         clear_reset_phases(goal_path)
         data = json.loads(goal_path.read_text())
         assert data["reset_phases"] == []
+
+
+def _make_run_metadata(
+    runs_dir: Path,
+    task_name: str,
+    timestamp: str,
+    phases: list[dict[str, str]],
+) -> Path:
+    """Create a run_metadata.json inside runs_dir/task_name/timestamp."""
+    run_dir = runs_dir / task_name / timestamp
+    run_dir.mkdir(parents=True)
+    metadata: dict[str, Any] = {"phases": phases}
+    metadata_path = run_dir / "run_metadata.json"
+    metadata_path.write_text(json.dumps(metadata))
+    return metadata_path
+
+
+class TestResetErroredPhases:
+    def test_resets_failed_phases_from_last_run(self, tmp_path: Path) -> None:
+        goal_path = _write_goal(
+            tmp_path / "test-task.json",
+            subtasks=[
+                {"filename": "fill-form.txt"},
+                {"filename": "verify-result.txt"},
+            ],
+        )
+        runs_dir = tmp_path / "runs"
+        _make_run_metadata(runs_dir, "test", "2026-01-01T00-00-00", [
+            {"name": "Fill Form", "outcome": "SUCCESS"},
+            {"name": "Verify Result", "outcome": "FAILED"},
+        ])
+
+        result = reset_errored_phases(goal_path, runs_dir)
+        assert result == ["Verify Result"]
+        data = json.loads(goal_path.read_text())
+        assert "Verify Result" in data["reset_phases"]
+        assert "Fill Form" not in data.get("reset_phases", [])
+
+    def test_skips_successful_phases(self, tmp_path: Path) -> None:
+        goal_path = _write_goal(
+            tmp_path / "test-task.json",
+            subtasks=[
+                {"filename": "fill-form.txt"},
+                {"filename": "verify-result.txt"},
+            ],
+        )
+        runs_dir = tmp_path / "runs"
+        _make_run_metadata(runs_dir, "test", "2026-01-01T00-00-00", [
+            {"name": "Fill Form", "outcome": "SUCCESS"},
+            {"name": "Verify Result", "outcome": "FAILED"},
+        ])
+
+        result = reset_errored_phases(goal_path, runs_dir)
+        assert "Fill Form" not in result
+
+    def test_returns_empty_when_no_prior_run(self, tmp_path: Path) -> None:
+        goal_path = _write_goal(tmp_path / "test-task.json")
+        runs_dir = tmp_path / "runs"
+        runs_dir.mkdir()
+        result = reset_errored_phases(goal_path, runs_dir)
+        assert result == []
+
+    def test_returns_empty_when_all_succeeded(self, tmp_path: Path) -> None:
+        goal_path = _write_goal(
+            tmp_path / "test-task.json",
+            subtasks=[
+                {"filename": "fill-form.txt"},
+                {"filename": "verify-result.txt"},
+            ],
+        )
+        runs_dir = tmp_path / "runs"
+        _make_run_metadata(runs_dir, "test", "2026-01-01T00-00-00", [
+            {"name": "Fill Form", "outcome": "SUCCESS"},
+            {"name": "Verify Result", "outcome": "SUCCESS"},
+        ])
+
+        result = reset_errored_phases(goal_path, runs_dir)
+        assert result == []
+        data = json.loads(goal_path.read_text())
+        assert data.get("reset_phases", []) == []

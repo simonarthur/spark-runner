@@ -1195,3 +1195,48 @@ class TestResetCommands:
         doc = Document("unreset ", len("unreset "))
         results = [c.text for c in completer.get_completions(doc, None)]
         assert "login" in results
+
+    def test_run_reset_errors_flag_calls_reset(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        config = _make_config(tmp_path)
+        assert config.goal_summaries_dir is not None
+        _write_goal(
+            config.goal_summaries_dir, "login",
+            subtasks=[
+                {"filename": "fill-form.txt"},
+                {"filename": "verify-result.txt"},
+            ],
+        )
+        # Create a run with a failed phase
+        assert config.runs_dir is not None
+        run_dir = config.runs_dir / "login" / "2026-01-01T00-00-00"
+        run_dir.mkdir(parents=True)
+        metadata = {
+            "phases": [
+                {"name": "Fill Form", "outcome": "SUCCESS"},
+                {"name": "Verify Result", "outcome": "FAILED"},
+            ],
+        }
+        (run_dir / "run_metadata.json").write_text(json.dumps(metadata))
+
+        with patch("spark_runner.goals.reset_errored_phases") as mock_reset:
+            mock_reset.return_value = ["Verify Result"]
+            # Patch run_single to avoid actually running
+            with patch("spark_runner.orchestrator.run_single") as mock_run:
+                mock_run.return_value = MagicMock(
+                    task_name="login", all_phases_succeeded=False,
+                )
+                dispatch("run", ["login", "--reset-errors"], config, _identity)
+
+            goal_path = config.goal_summaries_dir / "login-task.json"
+            mock_reset.assert_called_once_with(goal_path, config.runs_dir)
+
+    def test_completes_reset_errors_flag(self, tmp_path: Path) -> None:
+        from prompt_toolkit.document import Document
+
+        config = _make_config(tmp_path)
+        completer = SparkCompleter(config)
+        doc = Document("run --reset", len("run --reset"))
+        results = [c.text for c in completer.get_completions(doc, None)]
+        assert "--reset-errors" in results

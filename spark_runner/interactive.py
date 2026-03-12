@@ -55,7 +55,7 @@ def _bottom_toolbar() -> HTML:
 COMMANDS: dict[str, str] = {
     "goals": "List all goals (--unrun, --failed)",
     "show": "Show goal detail: show <goal>",
-    "run": "Run goal(s): run <goal> ... (--unrun, --failed, --no-update-summary, --no-update-tasks, --no-knowledge-reuse, --regenerate-tasks, --hints)",
+    "run": "Run goal(s): run <goal> ... (--unrun, --failed, --no-update-summary, --no-update-tasks, --no-knowledge-reuse, --regenerate-tasks, --hints, --reset-errors)",
     "delete": "Delete a goal: delete <goal>",
     "results": "List runs, or show detail: results [task/timestamp]",
     "errors": "Show runs with errors",
@@ -136,7 +136,7 @@ class SparkCompleter(Completer):
             if cmd == "goals":
                 flags = ["--unrun", "--failed"]
             elif cmd == "run":
-                flags = ["--unrun", "--failed", "--no-update-summary", "--no-update-tasks", "--no-knowledge-reuse", "--regenerate-tasks", "--hints"]
+                flags = ["--unrun", "--failed", "--no-update-summary", "--no-update-tasks", "--no-knowledge-reuse", "--regenerate-tasks", "--hints", "--reset-errors"]
             elif cmd == "orphans":
                 flags = ["--clean"]
             for flag in flags:
@@ -400,6 +400,7 @@ def _handle_run(args: list[str], config: SparkConfig) -> None:
     no_knowledge_reuse = "--no-knowledge-reuse" in args
     regenerate_tasks = "--regenerate-tasks" in args
     enable_hints = "--hints" in args
+    reset_errors = "--reset-errors" in args
     goal_names = [a for a in args if not a.startswith("--")]
 
     tasks: list[TaskSpec] = []
@@ -431,6 +432,14 @@ def _handle_run(args: list[str], config: SparkConfig) -> None:
     if not tasks:
         print("No goals specified. Usage: run <goal> [goal...] or run --unrun/--failed")
         return
+
+    # Auto-reset errored phases from the last run if requested
+    if reset_errors and config.runs_dir is not None:
+        from spark_runner.goals import reset_errored_phases
+
+        for task_spec in tasks:
+            if task_spec.goal_path is not None:
+                reset_errored_phases(task_spec.goal_path, config.runs_dir)
 
     # Build per-run config with flag overrides
     run_config = config

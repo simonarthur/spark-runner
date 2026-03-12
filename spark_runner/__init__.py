@@ -282,6 +282,11 @@ def clear_reset_phases(goal_path: Path) -> None:
     return _gl.clear_reset_phases(goal_path)
 
 
+def reset_errored_phases(goal_path: Path, runs_dir: Path) -> list[str]:
+    """Reset phases that had errors in the last run."""
+    return _gl.reset_errored_phases(goal_path, runs_dir)
+
+
 def decompose_single_phase(
     prompt: str,
     host: str,

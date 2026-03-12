@@ -154,6 +154,52 @@ def clear_reset_phases(goal_path: Path) -> None:
     goal_path.write_text(json.dumps(data, indent=2))
 
 
+def reset_errored_phases(goal_path: Path, runs_dir: Path) -> list[str]:
+    """Reset phases that had errors in the last run.
+
+    Reads the last run's ``run_metadata.json``, finds phases with
+    ``outcome != "SUCCESS"``, and marks each for fresh decomposition
+    via :func:`reset_phase`.
+
+    Args:
+        goal_path: Path to the goal summary JSON file.
+        runs_dir: Directory containing run output directories.
+
+    Returns:
+        A list of phase names that were reset.
+    """
+    task_name: str = goal_path.stem.removesuffix("-task")
+    run_info = get_last_run_info(runs_dir, task_name)
+    if run_info is None:
+        return []
+
+    timestamp, _status = run_info
+    metadata_path: Path = runs_dir / task_name / timestamp / "run_metadata.json"
+    if not metadata_path.exists():
+        return []
+
+    try:
+        meta: dict[str, Any] = json.loads(metadata_path.read_text())
+    except (json.JSONDecodeError, OSError):
+        return []
+
+    reset_names: list[str] = []
+    for phase in meta.get("phases", []):
+        if phase.get("outcome") != "SUCCESS":
+            name: str = phase.get("name", "")
+            if name and reset_phase(goal_path, name):
+                reset_names.append(name)
+
+    if reset_names:
+        names_str: str = ", ".join(reset_names)
+        print(
+            f"Auto-resetting {len(reset_names)} errored phase(s) "
+            f"from last run: {names_str}"
+        )
+
+    return reset_names
+
+
 def get_last_run_info(
     runs_dir: Path | None, task_name: str,
 ) -> tuple[str, str] | None:
