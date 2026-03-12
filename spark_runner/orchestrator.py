@@ -395,8 +395,8 @@ async def run_single(
     knowledge_match: dict[str, Any] | None = None
     if config.knowledge_reuse:
         if status_line:
-            status_line.set_status("Loading knowledge")
-        print("Loading knowledge from prior task files...")
+            status_line.set_status("📚 Loading knowledge")
+        print("📚 Loading knowledge from prior task files...")
         knowledge_index: list[dict[str, Any]] = load_knowledge_index(
             config.tasks_dir, host_restore_fn
         )
@@ -441,8 +441,8 @@ async def run_single(
             return RunResult()
         print()
         if status_line:
-            status_line.set_status("Generating task name")
-        print("Generating task name...")
+            status_line.set_status("🏷️ Generating task name")
+        print("🏷️ Generating task name...")
         # Call generate_task_name manually to capture the response for tracing
         naming_model = config.get_model("task_naming") or ModelConfig(max_tokens=64)
         naming_msgs = [{"role": "user", "content": (
@@ -521,8 +521,8 @@ async def run_single(
     # --- Knowledge matching (run_dir available) ---
     if km_index:
         if status_line:
-            status_line.set_status("Knowledge matching")
-        print("\nFinding relevant knowledge from prior task files...")
+            status_line.set_status("🔍 Knowledge matching")
+        print("\n🔍 Finding relevant knowledge from prior task files...")
         knowledge_match = find_relevant_knowledge(
             prompt, km_index, client,
             config.get_model("knowledge_matching"),
@@ -543,13 +543,13 @@ async def run_single(
     # --- Decomposition (run_dir available) ---
     if not phases or config.regenerate_tasks:
         if phases and config.regenerate_tasks:
-            print("Regenerating tasks (ignoring existing subtasks)...")
+            print("🔄 Regenerating tasks (ignoring existing subtasks)...")
             phases = []
     if not phases:
         print()
         if status_line:
-            status_line.set_status("Decomposing task")
-        print("Decomposing task into phases...")
+            status_line.set_status("🧩 Decomposing task")
+        print("🧩 Decomposing task into phases...")
         phases = decompose_task(
             prompt, config.base_url,
             config.tasks_dir, client, host_restore_fn,
@@ -584,8 +584,8 @@ async def run_single(
     routed_observations: dict[str, list[str | dict[str, str]]] = {}
     if knowledge_match and knowledge_match.get("relevant_observations"):
         if status_line:
-            status_line.set_status("Routing observations")
-        print("Routing observations to phases...")
+            status_line.set_status("🔀 Routing observations")
+        print("🔀 Routing observations to phases...")
         routed_observations = route_observations_to_phases(
             knowledge_match["relevant_observations"],
             phases,
@@ -686,7 +686,7 @@ async def run_single(
             all_screenshots.extend(phase_screenshots)
 
             if status_line:
-                status_line.set_status("Summarizing")
+                status_line.set_status("📝 Summarizing")
             log_event(event_log, f"Summarizing phase '{phase['name']}'...")
             summary: str = summarize_phase(
                 phase["name"], phase["task"], result, success,
@@ -771,7 +771,7 @@ async def run_single(
                         )
                         log_event(event_log, f"RETRYING phase '{phase['name']}' with operator hint")
                         if status_line:
-                            status_line.set_status("Retrying")
+                            status_line.set_status("🔁 Retrying")
                             await status_line.start()
                         success, result, phase_screenshots_retry = await run_phase(
                             phase["name"], retry_task, llm, browser,
@@ -780,7 +780,7 @@ async def run_single(
                         all_screenshots.extend(phase_screenshots_retry)
                         phase_screenshots.extend(phase_screenshots_retry)
                         if status_line:
-                            status_line.set_status("Summarizing")
+                            status_line.set_status("📝 Summarizing")
                         summary = summarize_phase(
                             phase["name"], phase["task"], result, success,
                             client, config.get_model("summarization"),
@@ -838,8 +838,8 @@ async def run_single(
         if all_summaries:
             if goal_path and config.update_summary:
                 if status_line:
-                    status_line.set_status("Generating task report")
-                print("\nGenerating task report...")
+                    status_line.set_status("📊 Generating task report")
+                print("\n📊 Generating task report...")
                 report: dict[str, Any] = generate_task_report(
                     task_name, prompt, all_summaries, client,
                     config.get_model("summarization"),
@@ -856,8 +856,8 @@ async def run_single(
                 existing_obs: list[str | dict[str, str]] = existing_data.get("key_observations", [])
                 new_obs: list[str] = report.get("key_observations", [])
                 if status_line:
-                    status_line.set_status("Merging observations")
-                print("Merging observations with existing goal summary...")
+                    status_line.set_status("🔀 Merging observations")
+                print("🔀 Merging observations with existing goal summary...")
                 merged_obs: list[dict[str, str]] = merge_observations(
                     existing_obs, new_obs, client,
                     config.get_model("classification"),
@@ -871,8 +871,8 @@ async def run_single(
                     "conversation_file": "llm_merge_observations.json",
                 })
                 if status_line:
-                    status_line.set_status("Classifying observations")
-                print("Classifying observations...")
+                    status_line.set_status("🏷️ Classifying observations")
+                print("🏷️ Classifying observations...")
                 classified_obs: list[dict[str, str]] = classify_observations(
                     prompt, merged_obs, client,
                     config.get_model("classification"),
@@ -895,8 +895,8 @@ async def run_single(
                 print(f"Updated goal summary: {goal_path} ({num_errors} errors, {num_warnings} warnings)")
             elif config.update_summary:
                 if status_line:
-                    status_line.set_status("Generating task report")
-                print("\nGenerating task report...")
+                    status_line.set_status("📊 Generating task report")
+                print("\n📊 Generating task report...")
                 report = generate_task_report(
                     task_name, prompt, all_summaries, client,
                     config.get_model("summarization"),
@@ -910,8 +910,8 @@ async def run_single(
                     "conversation_file": "llm_task_report.json",
                 })
                 if status_line:
-                    status_line.set_status("Classifying observations")
-                print("Classifying observations...")
+                    status_line.set_status("🏷️ Classifying observations")
+                print("🏷️ Classifying observations...")
                 classified_obs = classify_observations(
                     prompt, report.get("key_observations", []), client,
                     config.get_model("classification"),
@@ -968,7 +968,7 @@ async def run_single(
 
         try:
             if status_line:
-                status_line.set_status("Generating HTML report")
+                status_line.set_status("📄 Generating HTML report")
             report_index = generate_report(run_dir)
             print(f"\nHTML report: {report_index}")
             log_event(event_log, f"HTML report generated: {report_index}")
