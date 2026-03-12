@@ -196,6 +196,7 @@ class StatusLine:
         self._app: Application[None] | None = None
         self._thread: threading.Thread | None = None
         self._app_started: threading.Event = threading.Event()
+        self._pipe_input_ctx: Any = None
         self._patch_context: Any = None
         self._visible: bool = True
         # non-TTY state
@@ -283,6 +284,12 @@ class StatusLine:
             self._patch_context = None
         if self._app is not None and self._app.is_running and self._app.loop is not None:
             self._app.loop.call_soon_threadsafe(self._app.exit)
+        if self._pipe_input_ctx is not None:
+            try:
+                self._pipe_input_ctx.__exit__(None, None, None)
+            except Exception:
+                pass
+            self._pipe_input_ctx = None
 
     async def start(self) -> None:
         """Begin the background refresh loop."""
@@ -297,7 +304,8 @@ class StatusLine:
             style="bg:ansiyellow fg:ansiblack",
         )
 
-        pipe_input = create_pipe_input()
+        self._pipe_input_ctx = create_pipe_input()
+        pipe_input = self._pipe_input_ctx.__enter__()
         self._app = Application(
             layout=Layout(toolbar),
             output=get_app_session().output,
@@ -348,6 +356,10 @@ class StatusLine:
         if self._thread is not None:
             await asyncio.to_thread(self._thread.join)
             self._thread = None
+
+        if self._pipe_input_ctx is not None:
+            self._pipe_input_ctx.__exit__(None, None, None)
+            self._pipe_input_ctx = None
 
         atexit.unregister(self._atexit_cleanup)
 

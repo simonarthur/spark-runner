@@ -393,9 +393,11 @@ class TestStatusLine:
         await sl.start()
         try:
             assert sl._thread is not None
+            assert sl._thread.is_alive()
             assert sl._app is not None
             assert sl._app_started.is_set()
             assert sl._patch_context is not None
+            assert sl._pipe_input_ctx is not None
         finally:
             await sl.stop()
 
@@ -409,6 +411,7 @@ class TestStatusLine:
         await sl.stop()
         assert sl._thread is None
         assert sl._patch_context is None
+        assert sl._pipe_input_ctx is None
 
 
 class TestPhaseFailureCallback:
