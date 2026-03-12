@@ -1010,6 +1010,9 @@ async def run_single(
             report_index = generate_report(run_dir)
             print(f"\nHTML report: {report_index}")
             log_event(event_log, f"HTML report generated: {report_index}")
+            runs_index = run_dir.parent.parent / "index.html"
+            if runs_index.exists():
+                print(f"Run reports: file://{runs_index.resolve()}")
         except Exception as report_err:
             log_event(event_log, f"WARNING: Could not generate HTML report: {report_err}")
 
