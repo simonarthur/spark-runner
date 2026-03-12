@@ -83,6 +83,77 @@ def remove_hint(goal_path: Path, index: int) -> bool:
     return False
 
 
+def reset_phase(goal_path: Path, phase_name: str) -> bool:
+    """Mark a phase for fresh decomposition on the next run.
+
+    Args:
+        goal_path: Path to the goal summary JSON file.
+        phase_name: The phase name to reset (case-insensitive match).
+
+    Returns:
+        True if the phase was found and marked, False if not found.
+    """
+    valid_phases: list[str] = get_phase_names(goal_path)
+    matched: list[str] = [
+        p for p in valid_phases if p.lower() == phase_name.lower()
+    ]
+    if not matched:
+        return False
+    canonical: str = matched[0]
+    data: dict[str, Any] = json.loads(goal_path.read_text())
+    reset_phases: list[str] = data.get("reset_phases", [])
+    if canonical not in reset_phases:
+        reset_phases.append(canonical)
+    data["reset_phases"] = reset_phases
+    goal_path.write_text(json.dumps(data, indent=2))
+    return True
+
+
+def unreset_phase(goal_path: Path, phase_name: str) -> bool:
+    """Remove a phase from the reset list.
+
+    Args:
+        goal_path: Path to the goal summary JSON file.
+        phase_name: The phase name to unreset (case-insensitive match).
+
+    Returns:
+        True if the phase was found and removed, False if not found.
+    """
+    data: dict[str, Any] = json.loads(goal_path.read_text())
+    reset_phases: list[str] = data.get("reset_phases", [])
+    original_len: int = len(reset_phases)
+    reset_phases = [p for p in reset_phases if p.lower() != phase_name.lower()]
+    if len(reset_phases) == original_len:
+        return False
+    data["reset_phases"] = reset_phases
+    goal_path.write_text(json.dumps(data, indent=2))
+    return True
+
+
+def get_reset_phases(goal_path: Path) -> list[str]:
+    """Return the list of phases marked for reset.
+
+    Args:
+        goal_path: Path to the goal summary JSON file.
+
+    Returns:
+        A list of phase name strings marked for fresh decomposition.
+    """
+    data: dict[str, Any] = json.loads(goal_path.read_text())
+    return data.get("reset_phases", [])
+
+
+def clear_reset_phases(goal_path: Path) -> None:
+    """Clear all reset phase markers from a goal.
+
+    Args:
+        goal_path: Path to the goal summary JSON file.
+    """
+    data: dict[str, Any] = json.loads(goal_path.read_text())
+    data["reset_phases"] = []
+    goal_path.write_text(json.dumps(data, indent=2))
+
+
 def get_last_run_info(
     runs_dir: Path | None, task_name: str,
 ) -> tuple[str, str] | None:
@@ -256,16 +327,24 @@ def load_goal_summary(
     goal_data: dict[str, Any] = json.loads(restore_fn(goal_path.read_text()))
     prompt: str = goal_data["main_task"]
 
+    reset_set: set[str] = {
+        p.lower() for p in goal_data.get("reset_phases", [])
+    }
+
     phases: list[dict[str, str]] = []
     for entry in goal_data["subtasks"]:
         if not isinstance(entry, dict):
             continue
         subtask_path: Path = tasks_dir / entry["filename"]
+        name: str = subtask_path.stem.replace("-", " ").title()
+        if name.lower() in reset_set:
+            phases.append({"name": name, "task": ""})
+            print(f"  Phase '{name}' marked for fresh decomposition")
+            continue
         if not subtask_path.exists():
             print(f"  Warning: subtask file not found {subtask_path}, skipping")
             continue
         task_content: str = restore_fn(subtask_path.read_text())
-        name: str = subtask_path.stem.replace("-", " ").title()
         phases.append({"name": name, "task": _REPLAY_PREFIX + task_content})
 
     task_name: str = goal_path.stem.removesuffix("-task")
@@ -374,6 +453,12 @@ def show_goal_detail(
             text = _observation_text(obs)
             severity = obs.get("severity", "unclassified") if isinstance(obs, dict) else "unclassified"
             print(f"    [{severity}] {text}")
+
+    reset_phases: list[str] = data.get("reset_phases", [])
+    if reset_phases:
+        print(f"\n  Reset phases ({len(reset_phases)}):")
+        for rp in reset_phases:
+            print(f"    - {rp}")
 
     hints: list[dict[str, str]] = data.get("hints", [])
     if hints:

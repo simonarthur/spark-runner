@@ -27,11 +27,11 @@ from browser_use import Browser, ChatBrowserUse
 from browser_use.agent.views import AgentHistoryList
 
 from spark_runner.classification import classify_observations
-from spark_runner.decomposition import decompose_task, generate_task_name
+from spark_runner.decomposition import decompose_single_phase, decompose_task, generate_task_name
 from spark_runner.execution import build_augmented_task, run_phase
 from spark_runner.llm_trace import save_llm_conversation
 from spark_runner.observation_routing import route_observations_to_phases
-from spark_runner.goals import load_goal_summary, load_hints, save_hint
+from spark_runner.goals import clear_reset_phases, load_goal_summary, load_hints, save_hint
 from spark_runner.knowledge import find_relevant_knowledge, load_knowledge_index
 from spark_runner.log import attach_agent_log_handler, detach_agent_log_handler, log_event, log_problem
 from spark_runner.models import (
@@ -613,6 +613,25 @@ async def run_single(
             "conversation_file": None,
         })
 
+    # --- Selective re-decomposition for reset phases ---
+    empty_phases: list[int] = [i for i, p in enumerate(phases) if not p["task"]]
+    if empty_phases:
+        print(f"🧩 Decomposing {len(empty_phases)} reset phase(s)...")
+        for idx in empty_phases:
+            phase = phases[idx]
+            phase_hints: list[str] = [
+                h["text"] for h in goal_hints
+                if h["phase"].lower() == phase["name"].lower()
+            ]
+            fresh_task: str = decompose_single_phase(
+                prompt, config.base_url, phase["name"], phases,
+                client, host_restore_fn,
+                config.get_model("task_decomposition"),
+                run_dir=run_dir, hints=phase_hints or None,
+            )
+            phases[idx]["task"] = fresh_task
+            print(f"  ✓ {phase['name']}")
+
     print(f"Planned {len(phases)} phases:")
     for i, p in enumerate(phases, 1):
         print(f"  {i}. {p['name']}")
@@ -972,6 +991,13 @@ async def run_single(
                 num_warnings = len(classified_obs) - num_errors
                 log_event(event_log, f"Task report saved to {report_path} ({num_errors} errors, {num_warnings} warnings)")
                 print(f"Task report saved to {report_path} ({num_errors} errors, {num_warnings} warnings)")
+
+        # Clear consumed reset_phases from goal file
+        if goal_path and goal_path.exists():
+            _goal_data: dict[str, Any] = json.loads(goal_path.read_text())
+            if _goal_data.get("reset_phases"):
+                _goal_data["reset_phases"] = []
+                goal_path.write_text(json.dumps(_goal_data, indent=2))
 
         # Save pipeline data
         (run_dir / "pipeline.json").write_text(json.dumps(pipeline_steps, indent=2))

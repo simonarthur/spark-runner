@@ -51,6 +51,111 @@ def generate_task_name(
     return name or "unnamed-task"
 
 
+def decompose_single_phase(
+    prompt: str,
+    host: str,
+    phase_name: str,
+    all_phases: list[dict[str, str]],
+    client: anthropic.Anthropic,
+    restore_fn: Callable[[str], str],
+    model_config: ModelConfig | None = None,
+    run_dir: Path | None = None,
+    hints: list[str] | None = None,
+) -> str:
+    """Use an LLM to decompose a single phase of a goal, given context of surrounding phases.
+
+    Args:
+        prompt: The user's task description (overall goal).
+        host: Base URL of the application under test.
+        phase_name: Name of the phase to decompose.
+        all_phases: All phases with ``name`` and ``task`` keys. Non-empty tasks
+            provide context; the target phase will have an empty task.
+        client: Anthropic client for LLM calls.
+        restore_fn: Function to restore placeholders in stored text.
+        model_config: Model configuration.
+        run_dir: Optional directory to save LLM conversation traces.
+        hints: Optional phase-specific hints from a human reviewer.
+
+    Returns:
+        The task instruction string for the single phase.
+    """
+    if model_config is None:
+        model_config = ModelConfig()
+
+    phase_context_parts: list[str] = []
+    for p in all_phases:
+        if p["name"] == phase_name:
+            phase_context_parts.append(f"  - {p['name']} (THIS PHASE — needs fresh instructions)")
+        elif p["task"]:
+            preview: str = restore_fn(p["task"])[:200].replace("\n", " ")
+            phase_context_parts.append(f"  - {p['name']}: {preview}...")
+        else:
+            phase_context_parts.append(f"  - {p['name']} (also being re-decomposed)")
+    phase_context: str = "\n".join(phase_context_parts)
+
+    hints_section: str = ""
+    if hints:
+        hints_lines: list[str] = [
+            "\n\nOPERATOR HINTS for this phase (from a human reviewer — follow these closely):"
+        ]
+        for hint_text in hints:
+            hints_lines.append(f"- {hint_text}")
+        hints_section = "\n".join(hints_lines)
+
+    random_number = random.randint(100000, 999999)
+    prompt_content: str = f"""You are a browser automation planner for SparkyAI ({host}).
+
+You need to write detailed task instructions for a SINGLE phase of a multi-phase browser automation workflow.
+
+OVERALL GOAL: {prompt}
+
+ALL PHASES IN ORDER:
+{phase_context}
+
+IMPORTANT RULES:
+- If this is the "Login" phase, it must navigate to {host} and log in with:
+    Email: {{USER_EMAIL}}
+    Password: {{USER_PASSWORD}}
+- The phase should be a self-contained step with clear success criteria.
+- Write the task instructions as explicit, step-by-step directions for an AI agent controlling a browser.
+- The phase must start with ALL of these paragraphs (copy them verbatim):
+    "If the correct user is logged in, do not log in again. A login phase should be considered a SUCCESS in this state."
+    "IMPORTANT: Before doing anything else, check whether this phase's goal has ALREADY been achieved by a prior phase (e.g. the expected UI state is already visible). If so, report success immediately without taking any actions."
+    "Check for error popup/toast after every action. Report any deviations from expected behavior."
+    "{random_number} Usernames for form fields should be random and unique.  For example, if the form has a field for 'Email', the email should be random and unique.  Think of a highly obscure English adjective (the less common, the better)."
+    "If you cannot find an expected UI element after reasonable exploration (scrolling, waiting for load), do NOT keep retrying the same approaches and do NOT switch to a different mechanism. Report what you found, note the missing element, and FAIL the phase."
+    "If a feature does not work as expected (e.g. search returns no results, a button does nothing, a form fails to submit), do NOT work around it using a different feature or navigation path. Report the failure and FAIL the phase."
+- The FINAL instruction (last numbered step) MUST be a STOP condition in this exact format:
+    "STOP: Report success once <expected state>. Do NOT click any buttons, fill any fields, or proceed further — the next phase will handle that."
+  Additionally, repeat the stop condition BEFORE the last action step.
+- For form fields, specify exact values to enter.
+- For dropdowns/selectors that are custom, instruct the agent to type to filter/search rather than scroll.
+- For generation/loading steps, instruct the agent to poll every 5 seconds up to a timeout.
+- For navigation, instruct the agent to verify the page loaded by checking for expected elements.
+- Do NOT assume specific UI element names, field labels, or page layouts you haven't seen.
+  Use phrases like "if available", "look for", "if present" for UI elements beyond login.
+{hints_section}
+
+Return ONLY the task text for the phase "{phase_name}". Do NOT return JSON — just the plain text instructions.
+BASE_URL is {host}"""
+
+    max_tokens = max(model_config.max_tokens, 4096)
+    response: anthropic.types.Message = client.messages.create(
+        model=model_config.model,
+        max_tokens=max_tokens,
+        messages=[{"role": "user", "content": prompt_content}],
+    )
+    text: str = response.content[0].text.strip()
+
+    if run_dir is not None:
+        save_llm_conversation(
+            run_dir, f"single_phase_decomposition_{phase_name.lower().replace(' ', '_')}",
+            [{"role": "user", "content": prompt_content}], response,
+        )
+
+    return text
+
+
 def decompose_task(
     prompt: str,
     host: str,

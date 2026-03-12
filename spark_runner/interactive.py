@@ -64,12 +64,15 @@ COMMANDS: dict[str, str] = {
     "hint": "Add hint: hint <goal> [<phase>] -- <text>",
     "hints": "List hints: hints <goal>",
     "unhint": "Remove hint: unhint <goal> <index>",
+    "reset": "Reset phase for fresh decomposition: reset <goal> <phase>",
+    "resets": "List reset phases: resets <goal>",
+    "unreset": "Undo reset: unreset <goal> <phase>",
     "help": "Show available commands",
     "quit": "Exit the REPL",
 }
 
 # Commands that accept goal names as arguments
-_GOAL_ARG_COMMANDS = {"show", "run", "delete", "hints", "unhint"}
+_GOAL_ARG_COMMANDS = {"show", "run", "delete", "hints", "unhint", "resets"}
 # Commands that accept run paths as arguments
 _RUN_ARG_COMMANDS = {"results"}
 
@@ -139,6 +142,51 @@ class SparkCompleter(Completer):
             for flag in flags:
                 if flag.startswith(current):
                     yield Completion(flag, start_position=-len(current))
+            return
+
+        # Special: 'reset'/'unreset' have goal completion then phase completion
+        if cmd in ("reset", "unreset"):
+            at_goal_pos = (
+                (len(parts) == 1 and text.endswith(" "))
+                or (len(parts) == 2 and not text.endswith(" "))
+            )
+            if at_goal_pos:
+                for name in _list_goal_names(self._config):
+                    if name.startswith(current):
+                        yield Completion(name, start_position=-len(current))
+                return
+
+            # Phase name position (after goal)
+            goal_name = parts[1]
+            from spark_runner.goals import get_phase_names
+
+            gs_dir = self._config.goal_summaries_dir
+            phases: list[str] = []
+            if gs_dir is not None:
+                goal_path = gs_dir / f"{goal_name}-task.json"
+                phases = get_phase_names(goal_path)
+
+            # Build typed prefix for the phase
+            if text.endswith(" "):
+                phase_parts = parts[2:]
+            else:
+                phase_parts = parts[2:-1]
+            phase_typed = " ".join(phase_parts)
+            partial = current if len(parts) > 2 and not text.endswith(" ") else ""
+            full_prefix = (
+                (phase_typed + " " + partial).strip() if partial else phase_typed
+            )
+
+            raw_len = len(full_prefix)
+            if text.endswith(" ") and full_prefix:
+                raw_len += 1
+            start_pos = -raw_len
+
+            for phase in phases:
+                if not full_prefix or phase.lower().startswith(
+                    full_prefix.lower()
+                ):
+                    yield Completion(phase, start_position=start_pos)
             return
 
         # Special: 'hint' has goal completion then phase completion
@@ -271,6 +319,12 @@ def dispatch(
         _handle_hints(args, config)
     elif cmd == "unhint":
         _handle_unhint(args, config)
+    elif cmd == "reset":
+        _handle_reset(args, config)
+    elif cmd == "resets":
+        _handle_resets(args, config)
+    elif cmd == "unreset":
+        _handle_unreset(args, config)
     elif cmd == "orphans":
         _handle_orphans(args, config)
     else:
@@ -581,6 +635,92 @@ def _handle_unhint(args: list[str], config: SparkConfig) -> None:
         print(f"Hint {index} removed from goal \"{goal_name}\".")
     else:
         print(f"Invalid hint index: {index}")
+
+
+def _handle_reset(args: list[str], config: SparkConfig) -> None:
+    """Mark a phase for fresh decomposition: ``reset <goal> <phase>``."""
+    if len(args) < 2:
+        print("Usage: reset <goal> <phase>")
+        return
+
+    goal_name: str = args[0]
+    phase_name: str = " ".join(args[1:])
+
+    assert config.goal_summaries_dir is not None
+    goal_path: Path = config.goal_summaries_dir / f"{goal_name}-task.json"
+    if not goal_path.exists():
+        print(f"Goal not found: {goal_name}")
+        return
+
+    from spark_runner.goals import reset_phase
+
+    if reset_phase(goal_path, phase_name):
+        print(f"Phase \"{phase_name}\" marked for fresh decomposition in goal \"{goal_name}\".")
+    else:
+        from spark_runner.goals import get_phase_names
+
+        valid_phases: list[str] = get_phase_names(goal_path)
+        print(f"Unknown phase: \"{phase_name}\"")
+        if valid_phases:
+            print(f"Available phases: {', '.join(valid_phases)}")
+        else:
+            print("This goal has no subtask phases defined.")
+
+
+def _handle_resets(args: list[str], config: SparkConfig) -> None:
+    """List reset phases for a goal: ``resets <goal>``."""
+    if not args:
+        print("Usage: resets <goal>")
+        return
+
+    goal_name: str = args[0]
+    assert config.goal_summaries_dir is not None
+    goal_path: Path = config.goal_summaries_dir / f"{goal_name}-task.json"
+    if not goal_path.exists():
+        print(f"Goal not found: {goal_name}")
+        return
+
+    from spark_runner.goals import get_reset_phases
+
+    reset_phases: list[str] = get_reset_phases(goal_path)
+    if not reset_phases:
+        print(f"No phases reset for goal \"{goal_name}\".")
+        return
+
+    print(f"Reset phases for \"{goal_name}\":\n")
+    for rp in reset_phases:
+        print(f"  - {rp}")
+    print()
+
+
+def _handle_unreset(args: list[str], config: SparkConfig) -> None:
+    """Remove a phase from the reset list: ``unreset <goal> <phase>``."""
+    if len(args) < 2:
+        print("Usage: unreset <goal> <phase>")
+        return
+
+    goal_name: str = args[0]
+    phase_name: str = " ".join(args[1:])
+
+    assert config.goal_summaries_dir is not None
+    goal_path: Path = config.goal_summaries_dir / f"{goal_name}-task.json"
+    if not goal_path.exists():
+        print(f"Goal not found: {goal_name}")
+        return
+
+    from spark_runner.goals import unreset_phase
+
+    if unreset_phase(goal_path, phase_name):
+        print(f"Phase \"{phase_name}\" unreset in goal \"{goal_name}\".")
+    else:
+        from spark_runner.goals import get_reset_phases
+
+        current: list[str] = get_reset_phases(goal_path)
+        print(f"Phase \"{phase_name}\" is not in the reset list.")
+        if current:
+            print(f"Currently reset: {', '.join(current)}")
+        else:
+            print("No phases are currently reset.")
 
 
 def _handle_orphans(args: list[str], config: SparkConfig) -> None:

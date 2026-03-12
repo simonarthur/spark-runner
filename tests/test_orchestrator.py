@@ -744,3 +744,105 @@ class TestDecompositionHints:
             mock_decompose.assert_called_once()
             passed_hints = mock_decompose.call_args[1].get("hints")
             assert passed_hints is None
+
+
+class TestSelectiveRedecomposition:
+    """Tests for selective re-decomposition of reset phases."""
+
+    @pytest.mark.asyncio
+    async def test_empty_task_triggers_single_phase_decomposition(
+        self, tmp_path: Path, _minimal_config: SparkConfig,
+    ) -> None:
+        """When a phase has task='', decompose_single_phase should be called."""
+        config = _minimal_config
+
+        tasks_dir = config.tasks_dir
+        assert tasks_dir is not None
+        (tasks_dir / "login.txt").write_text("Log in instructions")
+        (tasks_dir / "fill-form.txt").write_text("Fill form instructions")
+
+        goal_file = config.goal_summaries_dir / "signup-task.json"
+        goal_data: dict[str, Any] = {
+            "main_task": "Test user sign-up",
+            "key_observations": [],
+            "subtasks": [
+                {"phase_name": "Login", "filename": "login.txt"},
+                {"phase_name": "Fill form", "filename": "fill-form.txt"},
+            ],
+            "reset_phases": ["Fill Form"],
+        }
+        goal_file.write_text(json.dumps(goal_data))
+
+        task = TaskSpec(goal_path=goal_file)
+
+        with (
+            patch("spark_runner.orchestrator.decompose_task") as mock_decompose,
+            patch("spark_runner.orchestrator.decompose_single_phase") as mock_single,
+            patch("spark_runner.orchestrator.run_phase", new_callable=AsyncMock) as mock_run_phase,
+            patch("spark_runner.orchestrator.summarize_phase") as mock_summarize,
+            patch("spark_runner.orchestrator.Browser") as mock_browser_cls,
+            patch("spark_runner.orchestrator.ChatBrowserUse"),
+            patch("spark_runner.orchestrator.generate_report"),
+        ):
+            mock_browser_cls.return_value.stop = AsyncMock()
+            mock_single.return_value = "Fresh fill form instructions"
+            mock_run_phase.return_value = (True, MagicMock(action_results=MagicMock(return_value=[])), [])
+            mock_summarize.return_value = "Phase completed"
+
+            from spark_runner.orchestrator import run_single
+
+            await run_single(task, config, client=MagicMock())
+
+            # decompose_task should NOT be called (phases were loaded from goal)
+            mock_decompose.assert_not_called()
+            # decompose_single_phase SHOULD be called for the reset phase
+            mock_single.assert_called_once()
+            assert mock_single.call_args.args[2] == "Fill Form"
+
+    @pytest.mark.asyncio
+    async def test_reset_phases_cleared_after_run(
+        self, tmp_path: Path, _minimal_config: SparkConfig,
+    ) -> None:
+        """After a run, reset_phases should be cleared from the goal JSON."""
+        config = _minimal_config
+
+        tasks_dir = config.tasks_dir
+        assert tasks_dir is not None
+        (tasks_dir / "login.txt").write_text("Log in")
+        (tasks_dir / "fill-form.txt").write_text("Fill form")
+
+        goal_file = config.goal_summaries_dir / "signup-task.json"
+        goal_data: dict[str, Any] = {
+            "main_task": "Test user sign-up",
+            "key_observations": [],
+            "subtasks": [
+                {"phase_name": "Login", "filename": "login.txt"},
+                {"phase_name": "Fill form", "filename": "fill-form.txt"},
+            ],
+            "reset_phases": ["Fill Form"],
+        }
+        goal_file.write_text(json.dumps(goal_data))
+
+        task = TaskSpec(goal_path=goal_file)
+
+        with (
+            patch("spark_runner.orchestrator.decompose_task"),
+            patch("spark_runner.orchestrator.decompose_single_phase") as mock_single,
+            patch("spark_runner.orchestrator.run_phase", new_callable=AsyncMock) as mock_run_phase,
+            patch("spark_runner.orchestrator.summarize_phase") as mock_summarize,
+            patch("spark_runner.orchestrator.Browser") as mock_browser_cls,
+            patch("spark_runner.orchestrator.ChatBrowserUse"),
+            patch("spark_runner.orchestrator.generate_report"),
+        ):
+            mock_browser_cls.return_value.stop = AsyncMock()
+            mock_single.return_value = "Fresh instructions"
+            mock_run_phase.return_value = (True, MagicMock(action_results=MagicMock(return_value=[])), [])
+            mock_summarize.return_value = "Phase completed"
+
+            from spark_runner.orchestrator import run_single
+
+            await run_single(task, config, client=MagicMock())
+
+            # Verify reset_phases was cleared
+            saved = json.loads(goal_file.read_text())
+            assert saved.get("reset_phases") == []

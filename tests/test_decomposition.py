@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from spark_runner.decomposition import decompose_task
+from spark_runner.decomposition import decompose_single_phase, decompose_task
 
 
 def _identity(text: str) -> str:
@@ -97,3 +97,96 @@ class TestDecomposeTaskHints:
         call_kwargs = mock_client.messages.create.call_args[1]
         prompt_content: str = call_kwargs["messages"][0]["content"]
         assert "OPERATOR HINTS" not in prompt_content
+
+
+class TestDecomposeSinglePhase:
+    """Tests for decompose_single_phase."""
+
+    def test_returns_task_string(self) -> None:
+        """decompose_single_phase should return the LLM response text."""
+        mock_response = MagicMock()
+        mock_response.content = [MagicMock(text="Step 1: Navigate to the form\nStep 2: Fill it out")]
+        mock_response.stop_reason = "end_turn"
+
+        mock_client = MagicMock()
+        mock_client.messages.create.return_value = mock_response
+
+        all_phases = [
+            {"name": "Login", "task": "Log in to the app"},
+            {"name": "Fill Form", "task": ""},
+            {"name": "Verify Result", "task": "Check the result"},
+        ]
+
+        result = decompose_single_phase(
+            prompt="Test the sign-up flow",
+            host="https://test.example.com",
+            phase_name="Fill Form",
+            all_phases=all_phases,
+            client=mock_client,
+            restore_fn=_identity,
+        )
+
+        assert result == "Step 1: Navigate to the form\nStep 2: Fill it out"
+        mock_client.messages.create.assert_called_once()
+
+    def test_prompt_includes_phase_context(self) -> None:
+        """The LLM prompt should include surrounding phase names and context."""
+        mock_response = MagicMock()
+        mock_response.content = [MagicMock(text="Fresh instructions")]
+        mock_response.stop_reason = "end_turn"
+
+        mock_client = MagicMock()
+        mock_client.messages.create.return_value = mock_response
+
+        all_phases = [
+            {"name": "Login", "task": "Navigate to the site and log in"},
+            {"name": "Fill Form", "task": ""},
+            {"name": "Verify Result", "task": "Check the confirmation page"},
+        ]
+
+        decompose_single_phase(
+            prompt="Test the sign-up flow",
+            host="https://test.example.com",
+            phase_name="Fill Form",
+            all_phases=all_phases,
+            client=mock_client,
+            restore_fn=_identity,
+        )
+
+        call_kwargs = mock_client.messages.create.call_args[1]
+        prompt_content: str = call_kwargs["messages"][0]["content"]
+        assert "Login" in prompt_content
+        assert "Fill Form" in prompt_content
+        assert "THIS PHASE" in prompt_content
+        assert "Verify Result" in prompt_content
+        assert "Test the sign-up flow" in prompt_content
+
+    def test_prompt_includes_hints(self) -> None:
+        """When hints are provided, they should appear in the prompt."""
+        mock_response = MagicMock()
+        mock_response.content = [MagicMock(text="Fresh instructions")]
+        mock_response.stop_reason = "end_turn"
+
+        mock_client = MagicMock()
+        mock_client.messages.create.return_value = mock_response
+
+        all_phases = [
+            {"name": "Login", "task": "Log in"},
+            {"name": "Fill Form", "task": ""},
+        ]
+
+        decompose_single_phase(
+            prompt="Test the sign-up flow",
+            host="https://test.example.com",
+            phase_name="Fill Form",
+            all_phases=all_phases,
+            client=mock_client,
+            restore_fn=_identity,
+            hints=["Use the dropdown menu", "Click More Options first"],
+        )
+
+        call_kwargs = mock_client.messages.create.call_args[1]
+        prompt_content: str = call_kwargs["messages"][0]["content"]
+        assert "OPERATOR HINTS" in prompt_content
+        assert "Use the dropdown menu" in prompt_content
+        assert "Click More Options first" in prompt_content

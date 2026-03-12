@@ -262,6 +262,39 @@ async def run_phase(
     )
 
 
+def reset_phase(goal_path: Path, phase_name: str) -> bool:
+    """Mark a phase for fresh decomposition on the next run."""
+    return _gl.reset_phase(goal_path, phase_name)
+
+
+def unreset_phase(goal_path: Path, phase_name: str) -> bool:
+    """Remove a phase from the reset list."""
+    return _gl.unreset_phase(goal_path, phase_name)
+
+
+def get_reset_phases(goal_path: Path) -> list[str]:
+    """Return the list of phases marked for reset."""
+    return _gl.get_reset_phases(goal_path)
+
+
+def clear_reset_phases(goal_path: Path) -> None:
+    """Clear all reset phase markers from a goal."""
+    return _gl.clear_reset_phases(goal_path)
+
+
+def decompose_single_phase(
+    prompt: str,
+    host: str,
+    phase_name: str,
+    all_phases: list[dict[str, str]],
+) -> str:
+    """Use an LLM to decompose a single phase, given context of surrounding phases."""
+    return _dc.decompose_single_phase(
+        prompt, host, phase_name, all_phases,
+        summary_client, _restore_host_only,
+    )
+
+
 def load_goal_summary(goal_path: Path) -> tuple[str, str, list[dict[str, str]]]:
     """Load a goal summary JSON and reconstruct the prompt, task name, and phases."""
     return _gl.load_goal_summary(goal_path, TASKS_DIR, _restore_host_only)

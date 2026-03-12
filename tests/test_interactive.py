@@ -1038,3 +1038,160 @@ class TestInteractiveCLIFlag:
         result = runner.invoke(cli, ["interactive"])
         mock_loop.assert_called_once_with(mock_config)
         assert result.exit_code == 0
+
+
+# ── reset commands ────────────────────────────────────────────────
+
+
+class TestResetCommands:
+    def test_reset_command_marks_phase(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        config = _make_config(tmp_path)
+        assert config.goal_summaries_dir is not None
+        _write_goal(
+            config.goal_summaries_dir, "login",
+            subtasks=[{"filename": "fill-form.txt"}],
+        )
+        dispatch("reset", ["login", "Fill", "Form"], config, _identity)
+        output = capsys.readouterr().out
+        assert "marked for fresh decomposition" in output
+        data = json.loads((config.goal_summaries_dir / "login-task.json").read_text())
+        assert data["reset_phases"] == ["Fill Form"]
+
+    def test_reset_command_unknown_phase(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        config = _make_config(tmp_path)
+        assert config.goal_summaries_dir is not None
+        _write_goal(
+            config.goal_summaries_dir, "login",
+            subtasks=[{"filename": "fill-form.txt"}],
+        )
+        dispatch("reset", ["login", "Nonexistent", "Phase"], config, _identity)
+        output = capsys.readouterr().out
+        assert "Unknown phase" in output
+        assert "Fill Form" in output
+
+    def test_reset_command_goal_not_found(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        config = _make_config(tmp_path)
+        dispatch("reset", ["nonexistent", "Phase"], config, _identity)
+        output = capsys.readouterr().out
+        assert "Goal not found" in output
+
+    def test_reset_command_missing_args(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        config = _make_config(tmp_path)
+        dispatch("reset", ["login"], config, _identity)
+        output = capsys.readouterr().out
+        assert "Usage" in output
+
+    def test_resets_command_lists_reset_phases(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        config = _make_config(tmp_path)
+        assert config.goal_summaries_dir is not None
+        _write_goal(
+            config.goal_summaries_dir, "login",
+            subtasks=[{"filename": "fill-form.txt"}],
+        )
+        # Mark a phase as reset
+        goal_path = config.goal_summaries_dir / "login-task.json"
+        data = json.loads(goal_path.read_text())
+        data["reset_phases"] = ["Fill Form"]
+        goal_path.write_text(json.dumps(data))
+        dispatch("resets", ["login"], config, _identity)
+        output = capsys.readouterr().out
+        assert "Fill Form" in output
+
+    def test_resets_command_empty(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        config = _make_config(tmp_path)
+        assert config.goal_summaries_dir is not None
+        _write_goal(config.goal_summaries_dir, "login")
+        dispatch("resets", ["login"], config, _identity)
+        output = capsys.readouterr().out
+        assert "No phases reset" in output
+
+    def test_resets_command_missing_arg(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        config = _make_config(tmp_path)
+        dispatch("resets", [], config, _identity)
+        output = capsys.readouterr().out
+        assert "Usage" in output
+
+    def test_unreset_command_removes_phase(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        config = _make_config(tmp_path)
+        assert config.goal_summaries_dir is not None
+        _write_goal(
+            config.goal_summaries_dir, "login",
+            subtasks=[{"filename": "fill-form.txt"}],
+        )
+        goal_path = config.goal_summaries_dir / "login-task.json"
+        data = json.loads(goal_path.read_text())
+        data["reset_phases"] = ["Fill Form"]
+        goal_path.write_text(json.dumps(data))
+        dispatch("unreset", ["login", "Fill", "Form"], config, _identity)
+        output = capsys.readouterr().out
+        assert "unreset" in output
+        data = json.loads(goal_path.read_text())
+        assert data["reset_phases"] == []
+
+    def test_unreset_command_nonexistent(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        config = _make_config(tmp_path)
+        assert config.goal_summaries_dir is not None
+        _write_goal(config.goal_summaries_dir, "login")
+        dispatch("unreset", ["login", "Fill", "Form"], config, _identity)
+        output = capsys.readouterr().out
+        assert "not in the reset list" in output
+
+    def test_completes_goal_names_for_reset(self, tmp_path: Path) -> None:
+        from prompt_toolkit.document import Document
+
+        config = _make_config(tmp_path)
+        assert config.goal_summaries_dir is not None
+        _write_goal(config.goal_summaries_dir, "login")
+        _write_goal(config.goal_summaries_dir, "logout")
+        completer = SparkCompleter(config)
+        doc = Document("reset ", len("reset "))
+        results = [c.text for c in completer.get_completions(doc, None)]
+        assert "login" in results
+        assert "logout" in results
+
+    def test_completes_phase_names_for_reset(self, tmp_path: Path) -> None:
+        from prompt_toolkit.document import Document
+
+        config = _make_config(tmp_path)
+        assert config.goal_summaries_dir is not None
+        _write_goal(
+            config.goal_summaries_dir, "login",
+            subtasks=[
+                {"filename": "fill-form.txt"},
+                {"filename": "verify-result.txt"},
+            ],
+        )
+        completer = SparkCompleter(config)
+        doc = Document("reset login ", len("reset login "))
+        results = [c.text for c in completer.get_completions(doc, None)]
+        assert "Fill Form" in results
+        assert "Verify Result" in results
+
+    def test_completes_goal_names_for_unreset(self, tmp_path: Path) -> None:
+        from prompt_toolkit.document import Document
+
+        config = _make_config(tmp_path)
+        assert config.goal_summaries_dir is not None
+        _write_goal(config.goal_summaries_dir, "login")
+        completer = SparkCompleter(config)
+        doc = Document("unreset ", len("unreset "))
+        results = [c.text for c in completer.get_completions(doc, None)]
+        assert "login" in results

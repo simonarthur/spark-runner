@@ -6,14 +6,27 @@ import json
 from pathlib import Path
 from typing import Any
 
-from spark_runner.goals import get_phase_names, load_hints, remove_hint, save_hint
+from spark_runner.goals import (
+    clear_reset_phases,
+    get_phase_names,
+    get_reset_phases,
+    load_hints,
+    remove_hint,
+    reset_phase,
+    save_hint,
+    unreset_phase,
+)
 
 
-def _write_goal(path: Path, hints: list[dict[str, str]] | None = None) -> Path:
-    """Write a minimal goal JSON, optionally with hints."""
+def _write_goal(
+    path: Path,
+    hints: list[dict[str, str]] | None = None,
+    subtasks: list[dict[str, str]] | None = None,
+) -> Path:
+    """Write a minimal goal JSON, optionally with hints and subtasks."""
     data: dict[str, Any] = {
         "main_task": "Test goal",
-        "subtasks": [],
+        "subtasks": subtasks or [],
         "key_observations": [],
     }
     if hints is not None:
@@ -123,3 +136,74 @@ class TestGetPhaseNames:
         }
         goal_path.write_text(json.dumps(data))
         assert get_phase_names(goal_path) == ["Login"]
+
+
+class TestResetPhase:
+    def test_reset_phase_adds_to_json(self, tmp_path: Path) -> None:
+        goal_path = _write_goal(
+            tmp_path / "test-task.json",
+            subtasks=[{"filename": "fill-form.txt"}, {"filename": "verify-result.txt"}],
+        )
+        assert reset_phase(goal_path, "Fill Form") is True
+        data = json.loads(goal_path.read_text())
+        assert data["reset_phases"] == ["Fill Form"]
+
+    def test_reset_phase_deduplicates(self, tmp_path: Path) -> None:
+        goal_path = _write_goal(
+            tmp_path / "test-task.json",
+            subtasks=[{"filename": "fill-form.txt"}],
+        )
+        reset_phase(goal_path, "Fill Form")
+        reset_phase(goal_path, "Fill Form")
+        data = json.loads(goal_path.read_text())
+        assert data["reset_phases"] == ["Fill Form"]
+
+    def test_reset_phase_unknown_returns_false(self, tmp_path: Path) -> None:
+        goal_path = _write_goal(
+            tmp_path / "test-task.json",
+            subtasks=[{"filename": "fill-form.txt"}],
+        )
+        assert reset_phase(goal_path, "Nonexistent Phase") is False
+        data = json.loads(goal_path.read_text())
+        assert "reset_phases" not in data
+
+    def test_reset_phase_case_insensitive(self, tmp_path: Path) -> None:
+        goal_path = _write_goal(
+            tmp_path / "test-task.json",
+            subtasks=[{"filename": "fill-form.txt"}],
+        )
+        assert reset_phase(goal_path, "fill form") is True
+        data = json.loads(goal_path.read_text())
+        assert data["reset_phases"] == ["Fill Form"]
+
+    def test_unreset_phase_removes(self, tmp_path: Path) -> None:
+        goal_path = _write_goal(
+            tmp_path / "test-task.json",
+            subtasks=[{"filename": "fill-form.txt"}, {"filename": "verify-result.txt"}],
+        )
+        reset_phase(goal_path, "Fill Form")
+        reset_phase(goal_path, "Verify Result")
+        assert unreset_phase(goal_path, "Fill Form") is True
+        data = json.loads(goal_path.read_text())
+        assert data["reset_phases"] == ["Verify Result"]
+
+    def test_unreset_phase_nonexistent_returns_false(self, tmp_path: Path) -> None:
+        goal_path = _write_goal(
+            tmp_path / "test-task.json",
+            subtasks=[{"filename": "fill-form.txt"}],
+        )
+        assert unreset_phase(goal_path, "Fill Form") is False
+
+    def test_get_reset_phases_empty_by_default(self, tmp_path: Path) -> None:
+        goal_path = _write_goal(tmp_path / "test-task.json")
+        assert get_reset_phases(goal_path) == []
+
+    def test_clear_reset_phases(self, tmp_path: Path) -> None:
+        goal_path = _write_goal(
+            tmp_path / "test-task.json",
+            subtasks=[{"filename": "fill-form.txt"}],
+        )
+        reset_phase(goal_path, "Fill Form")
+        clear_reset_phases(goal_path)
+        data = json.loads(goal_path.read_text())
+        assert data["reset_phases"] == []
