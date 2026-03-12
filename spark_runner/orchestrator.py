@@ -6,6 +6,7 @@ import asyncio
 import atexit
 import contextvars
 import json
+import logging
 import os
 import shutil
 import sys
@@ -199,6 +200,7 @@ class StatusLine:
         self._pipe_input_ctx: Any = None
         self._patch_context: Any = None
         self._visible: bool = True
+        self._saved_streams: list[tuple[logging.StreamHandler, Any]] = []
         # non-TTY state
         self._task: asyncio.Task[None] | None = None
 
@@ -276,6 +278,12 @@ class StatusLine:
 
     def _atexit_cleanup(self) -> None:
         """Best-effort cleanup registered with atexit."""
+        for handler, original_stream in self._saved_streams:
+            try:
+                handler.stream = original_stream
+            except Exception:
+                pass
+        self._saved_streams = []
         if self._patch_context is not None:
             try:
                 self._patch_context.__exit__(None, None, None)
@@ -331,6 +339,19 @@ class StatusLine:
         self._patch_context = patch_stdout(raw=True)
         self._patch_context.__enter__()
 
+        # Re-point any existing logging StreamHandlers to the patched stderr.
+        # Libraries like browser_use create StreamHandlers at import time that
+        # capture the original sys.stderr reference, bypassing patch_stdout.
+        self._saved_streams = []
+        for logger_name in ("browser_use", "bubus"):
+            logger = logging.getLogger(logger_name)
+            for handler in logger.handlers:
+                if isinstance(handler, logging.StreamHandler) and not isinstance(
+                    handler, logging.FileHandler
+                ):
+                    self._saved_streams.append((handler, handler.stream))
+                    handler.stream = sys.stderr
+
         atexit.register(self._atexit_cleanup)
 
     async def stop(self) -> None:
@@ -343,6 +364,11 @@ class StatusLine:
                 pass
             self._task = None
             return
+
+        # Restore logging StreamHandlers to original streams before un-patching
+        for handler, original_stream in self._saved_streams:
+            handler.stream = original_stream
+        self._saved_streams = []
 
         # Restore stdout/stderr
         if self._patch_context is not None:

@@ -413,6 +413,32 @@ class TestStatusLine:
         assert sl._patch_context is None
         assert sl._pipe_input_ctx is None
 
+    @pytest.mark.asyncio
+    async def test_start_repoints_logging_stream_handlers(self) -> None:
+        """start() should re-point StreamHandlers on browser_use/bubus loggers."""
+        import logging
+
+        logger = logging.getLogger("browser_use")
+        original_stderr = sys.stderr
+        handler = logging.StreamHandler(original_stderr)
+        logger.addHandler(handler)
+        try:
+            sl = StatusLine()
+            sl._is_tty = True
+            sl.set_goal("test", 1, 1)
+            await sl.start()
+            try:
+                # Handler should now point to the patched stderr, not the original
+                assert handler.stream is not original_stderr
+                assert handler.stream is sys.stderr
+                assert len(sl._saved_streams) >= 1
+            finally:
+                await sl.stop()
+            # After stop, handler should be restored to the original stream
+            assert handler.stream is original_stderr
+        finally:
+            logger.removeHandler(handler)
+
 
 class TestPhaseFailureCallback:
     """Tests for the on_phase_failure retry mechanism in run_single."""
