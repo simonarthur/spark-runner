@@ -339,3 +339,31 @@ class TestMergeObservations:
         )
         result = spark_runner.merge_observations(["a"], ["b"])
         assert len(result) == 2
+
+    def test_retries_on_truncated_response(self, mock_summary_client: MagicMock) -> None:
+        """When the LLM response is truncated, retry with higher max_tokens."""
+        truncated = make_llm_response('["obs one", "obs tw')
+        truncated.stop_reason = "max_tokens"
+        success = make_llm_response(json.dumps(["obs one", "obs two"]))
+        success.stop_reason = "end_turn"
+        mock_summary_client.messages.create.side_effect = [truncated, success]
+        result = spark_runner.merge_observations(["obs one"], ["obs two"])
+        assert len(result) == 2
+        assert result[0]["text"] == "obs one"
+        assert result[1]["text"] == "obs two"
+        assert mock_summary_client.messages.create.call_count == 2
+        # Second call should have higher max_tokens
+        second_call_kwargs = mock_summary_client.messages.create.call_args_list[1][1]
+        assert second_call_kwargs["max_tokens"] > 4096
+
+    def test_retries_on_json_parse_error(self, mock_summary_client: MagicMock) -> None:
+        """When the response is not valid JSON, retry with higher max_tokens."""
+        bad = make_llm_response("not json at all")
+        bad.stop_reason = "end_turn"
+        good = make_llm_response(json.dumps(["merged"]))
+        good.stop_reason = "end_turn"
+        mock_summary_client.messages.create.side_effect = [bad, good]
+        result = spark_runner.merge_observations(["a"], ["b"])
+        assert len(result) == 1
+        assert result[0]["text"] == "merged"
+        assert mock_summary_client.messages.create.call_count == 2

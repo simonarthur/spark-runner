@@ -90,18 +90,36 @@ New observations:
 {json.dumps(new_texts, indent=2)}
 
 Return ONLY a valid JSON array of strings — the merged, de-duplicated observations."""}]
-    response: anthropic.types.Message = client.messages.create(
-        model=model_config.model,
-        max_tokens=model_config.max_tokens,
-        messages=merge_messages,
-    )
-    if run_dir is not None:
-        save_llm_conversation(run_dir, "merge_observations", merge_messages, response)
-    text: str = response.content[0].text.strip()
-    match: re.Match[str] | None = re.search(r"\[.*\]", text, re.DOTALL)
-    if match:
-        text = match.group(0)
-    merged_texts: list[str] = json.loads(text)
+
+    max_tokens: int = max(model_config.max_tokens, 4096)
+    max_attempts: int = 3
+    for attempt in range(max_attempts):
+        response: anthropic.types.Message = client.messages.create(
+            model=model_config.model,
+            max_tokens=max_tokens,
+            messages=merge_messages,
+        )
+        if run_dir is not None:
+            save_llm_conversation(run_dir, "merge_observations", merge_messages, response)
+        text: str = response.content[0].text.strip()
+
+        if response.stop_reason == "max_tokens" and attempt < max_attempts - 1:
+            max_tokens = min(max_tokens * 2, 32768)
+            print(f"  Merge response truncated, retrying with max_tokens={max_tokens}...")
+            continue
+
+        match: re.Match[str] | None = re.search(r"\[.*\]", text, re.DOTALL)
+        if match:
+            text = match.group(0)
+        try:
+            merged_texts: list[str] = json.loads(text)
+            break
+        except json.JSONDecodeError:
+            if attempt < max_attempts - 1:
+                max_tokens = min(max_tokens * 2, 32768)
+                print(f"  Merge JSON parse failed, retrying with max_tokens={max_tokens}...")
+                continue
+            raise
 
     return [
         {"text": t, "severity": severity_map.get(t, "warning")}
