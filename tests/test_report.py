@@ -196,6 +196,59 @@ class TestGenerateReport:
         assert 'conversations.html#phase-2' in phases_html
         assert 'agent_log.html#phase-2' in phases_html
 
+    def test_phases_page_shows_phase_hints(self, tmp_path: Path) -> None:
+        """Phase-specific hints should appear on each phase section."""
+        run_dir = _make_run_dir(
+            tmp_path,
+            phases=[
+                {"name": "Fill Form", "outcome": "SUCCESS", "screenshots": []},
+                {"name": "Verify Result", "outcome": "SUCCESS", "screenshots": []},
+            ],
+        )
+        # Create archived goal with hints
+        goal_dir = run_dir / "goal"
+        goal_dir.mkdir()
+        goal_data = {
+            "main_task": "Test signup",
+            "key_observations": [],
+            "subtasks": [
+                {"filename": "fill-form.txt"},
+                {"filename": "verify-result.txt"},
+            ],
+            "hints": [
+                {"phase": "Fill Form", "text": "Use the dropdown"},
+                {"phase": "Fill Form", "text": "Click More Options first"},
+                {"phase": "", "text": "Split into two phases"},
+            ],
+        }
+        (goal_dir / "signup-test-task.json").write_text(json.dumps(goal_data))
+
+        generate_report(run_dir)
+        phases_html = (run_dir / "report" / "phases.html").read_text()
+
+        # Phase-specific hints
+        assert "Operator hints:" in phases_html
+        assert "Use the dropdown" in phases_html
+        assert "Click More Options first" in phases_html
+        # Goal-level hint at top
+        assert "Goal-level hints" in phases_html
+        assert "Split into two phases" in phases_html
+        # Verify Result phase should NOT show Fill Form hints
+        # (check structure: hints appear before phase links)
+        assert "phase-hints" in phases_html
+
+    def test_phases_page_no_hints_when_none(self, tmp_path: Path) -> None:
+        """Phases page should not show hints sections when no hints exist."""
+        run_dir = _make_run_dir(
+            tmp_path,
+            phases=[{"name": "Login", "outcome": "SUCCESS", "screenshots": []}],
+        )
+        generate_report(run_dir)
+        phases_html = (run_dir / "report" / "phases.html").read_text()
+
+        assert "Operator hints:" not in phases_html
+        assert "Goal-level hints" not in phases_html
+
     def test_events_page_contains_log_content(self, tmp_path: Path) -> None:
         run_dir = _make_run_dir(
             tmp_path,
@@ -824,6 +877,70 @@ class TestGoalPage:
         assert "<strong>credentials</strong>" in goal_html
         assert "<li>Check welcome message</li>" in goal_html
         assert 'id="subtasks"' in goal_html
+
+    def test_goal_page_displays_hints(self, tmp_path: Path) -> None:
+        """Goal page should render hints table when hints exist."""
+        run_dir = _make_run_dir(tmp_path, task_name="signup-test")
+        goal_dir = run_dir / "goal"
+        goal_dir.mkdir()
+        goal_data = {
+            "main_task": "Test sign-up",
+            "key_observations": [],
+            "subtasks": [{"filename": "fill-form.txt"}],
+            "hints": [
+                {"phase": "Fill Form", "text": "Use the dropdown menu"},
+                {"phase": "", "text": "Split into two phases"},
+            ],
+        }
+        (goal_dir / "signup-test-task.json").write_text(json.dumps(goal_data))
+
+        generate_report(run_dir)
+        goal_html = (run_dir / "report" / "goal.html").read_text()
+
+        assert "Hints" in goal_html
+        assert "Fill Form" in goal_html
+        assert "Use the dropdown menu" in goal_html
+        assert "Goal" in goal_html
+        assert "Split into two phases" in goal_html
+
+    def test_goal_page_no_hints_section_when_empty(self, tmp_path: Path) -> None:
+        """Goal page should not render hints section when there are none."""
+        run_dir = _make_run_dir(tmp_path, task_name="signup-test")
+        goal_dir = run_dir / "goal"
+        goal_dir.mkdir()
+        goal_data = {
+            "main_task": "Test sign-up",
+            "key_observations": [],
+            "subtasks": [],
+        }
+        (goal_dir / "signup-test-task.json").write_text(json.dumps(goal_data))
+
+        generate_report(run_dir)
+        goal_html = (run_dir / "report" / "goal.html").read_text()
+
+        assert "<h2>Hints</h2>" not in goal_html
+
+    def test_goal_page_displays_dates(self, tmp_path: Path) -> None:
+        """Goal page should render created_at and updated_at when present."""
+        run_dir = _make_run_dir(tmp_path, task_name="signup-test")
+        goal_dir = run_dir / "goal"
+        goal_dir.mkdir()
+        goal_data = {
+            "main_task": "Test sign-up",
+            "key_observations": [],
+            "subtasks": [],
+            "created_at": "2026-03-10T12:00:00Z",
+            "updated_at": "2026-03-11T08:30:00Z",
+        }
+        (goal_dir / "signup-test-task.json").write_text(json.dumps(goal_data))
+
+        generate_report(run_dir)
+        goal_html = (run_dir / "report" / "goal.html").read_text()
+
+        assert "2026-03-10T12:00:00Z" in goal_html
+        assert "2026-03-11T08:30:00Z" in goal_html
+        assert "Created:" in goal_html
+        assert "Updated:" in goal_html
 
     def test_goal_page_in_nav(self, tmp_path: Path) -> None:
         """Goal page should appear in the nav bar."""

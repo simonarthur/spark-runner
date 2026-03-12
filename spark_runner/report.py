@@ -107,6 +107,16 @@ pre {
   margin: 0.75rem 0;
   border-radius: 0 6px 6px 0;
 }
+.phase-hints {
+  background: #eff6ff;
+  border-left: 4px solid var(--accent);
+  padding: 0.5rem 1rem;
+  margin: 0.5rem 0;
+  border-radius: 0 6px 6px 0;
+  font-size: 0.9rem;
+}
+.phase-hints ul { margin: 0.25rem 0 0; padding-left: 1.5rem; }
+.phase-hints li { margin: 0.15rem 0; }
 .thumb-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
@@ -459,6 +469,36 @@ def _render_fallback_phase_table(
     return f"{meta_table}\n{phase_rows}"
 
 
+def _render_goal_hints(hints: list[dict[str, str]]) -> str:
+    """Render goal hints as an HTML table."""
+    if not hints:
+        return ""
+    rows: list[str] = []
+    for h in hints:
+        phase = _html_escape(h.get("phase", ""))
+        label = phase if phase else "Goal"
+        text = _html_escape(h.get("text", ""))
+        rows.append(f"<tr><td>{label}</td><td>{text}</td></tr>")
+    return (
+        '<h2>Hints</h2>\n'
+        '<table><tr><th>Phase</th><th>Hint</th></tr>\n'
+        + "\n".join(rows)
+        + "\n</table>"
+    )
+
+
+def _render_goal_dates(goal_data: dict[str, Any]) -> str:
+    """Render created_at / updated_at timestamps if present."""
+    parts: list[str] = []
+    if goal_data.get("created_at"):
+        parts.append(f"Created: {_html_escape(goal_data['created_at'])}")
+    if goal_data.get("updated_at"):
+        parts.append(f"Updated: {_html_escape(goal_data['updated_at'])}")
+    if not parts:
+        return ""
+    return f'<p style="color:var(--muted)">{" | ".join(parts)}</p>\n'
+
+
 def _render_goal_observations(observations: list[dict[str, str] | str]) -> str:
     """Render goal observations as an HTML table with severity badges."""
     if not observations:
@@ -536,16 +576,47 @@ def _generate_goal_page(run_dir: Path, detail: RunDetail) -> str:
     main_task = _html_escape(goal_data.get("main_task", "(no description)"))
     observations: list[dict[str, str] | str] = goal_data.get("key_observations", [])
     subtasks: list[dict[str, Any]] = goal_data.get("subtasks", [])
+    hints: list[dict[str, str]] = goal_data.get("hints", [])
 
+    dates_html = _render_goal_dates(goal_data)
     obs_html = _render_goal_observations(observations)
+    hints_html = _render_goal_hints(hints)
     subtasks_html = _render_goal_subtasks(goal_dir, subtasks)
 
     body = (
         f"<h1>Goal: {main_task}</h1>\n"
         f'<p style="color:var(--muted)">Source: {_html_escape(goal_file.name)}</p>\n'
-        f"{obs_html}\n{subtasks_html}"
+        f"{dates_html}{obs_html}\n{hints_html}\n{subtasks_html}"
     )
     return _page("Goal", nav_html, body)
+
+
+def _load_goal_hints(run_dir: Path) -> list[dict[str, str]]:
+    """Load hints from the archived goal file in ``run_dir/goal/``."""
+    goal_dir = run_dir / "goal"
+    if not goal_dir.exists():
+        return []
+    goal_files = list(goal_dir.glob("*-task.json"))
+    if not goal_files:
+        return []
+    try:
+        data: dict[str, Any] = json.loads(goal_files[0].read_text())
+        return data.get("hints", [])
+    except (json.JSONDecodeError, OSError):
+        return []
+
+
+def _render_phase_hints(hints: list[str]) -> str:
+    """Render operator hints injected into a phase."""
+    if not hints:
+        return ""
+    items = "".join(f"<li>{_html_escape(h)}</li>" for h in hints)
+    return (
+        '<div class="phase-hints">'
+        '<strong>Operator hints:</strong>'
+        f'<ul>{items}</ul>'
+        '</div>'
+    )
 
 
 def _generate_phases_page(
@@ -557,6 +628,9 @@ def _generate_phases_page(
     """Generate the Phases page with rendered markdown summaries."""
     nav_html = _nav("phases.html", _has_problems(run_dir))
     sections: list[str] = []
+
+    # Load hints from archived goal file
+    all_hints: list[dict[str, str]] = _load_goal_hints(run_dir)
 
     for i, phase in enumerate(detail.phases, 1):
         badge = _outcome_badge(phase.outcome)
@@ -573,6 +647,13 @@ def _generate_phases_page(
         else:
             rendered = "<p><em>No summary available.</em></p>"
 
+        # Operator hints injected into this phase
+        phase_hint_texts: list[str] = [
+            h["text"] for h in all_hints
+            if h.get("phase", "").lower() == phase.name.lower()
+        ]
+        hints_html = _render_phase_hints(phase_hint_texts)
+
         # Cross-links to related pages
         phase_links = (
             f'<p style="font-size:0.9rem">'
@@ -585,12 +666,26 @@ def _generate_phases_page(
         phase_screenshots = ss_map.get(phase.name, [])
         thumbs = _render_thumbnail_grid(phase_screenshots) if phase_screenshots else ""
 
-        sections.append(f"{heading}\n{phase_links}\n{rendered}\n{thumbs}")
+        sections.append(f"{heading}\n{hints_html}\n{phase_links}\n{rendered}\n{thumbs}")
 
     if not sections:
         sections.append("<p>No phases recorded.</p>")
 
-    body = "<h1>Phases</h1>\n" + "\n".join(sections)
+    # Show goal-level hints (used during decomposition) at the top
+    goal_level_hints: list[str] = [
+        h["text"] for h in all_hints if not h.get("phase")
+    ]
+    decomp_html = ""
+    if goal_level_hints:
+        items = "".join(f"<li>{_html_escape(h)}</li>" for h in goal_level_hints)
+        decomp_html = (
+            '<div class="phase-hints">'
+            '<strong>Goal-level hints (used during task decomposition):</strong>'
+            f'<ul>{items}</ul>'
+            '</div>\n'
+        )
+
+    body = f"<h1>Phases</h1>\n{decomp_html}" + "\n".join(sections)
     return _page("Phases", nav_html, body)
 
 
