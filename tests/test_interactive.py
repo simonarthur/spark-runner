@@ -271,6 +271,26 @@ class TestDispatch:
         output = capsys.readouterr().out
         assert "Log in" in output
 
+    def test_show_goal_displays_hints(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        config = _make_config(tmp_path)
+        assert config.goal_summaries_dir is not None
+        goal_path = _write_goal(config.goal_summaries_dir, "login")
+        data = json.loads(goal_path.read_text())
+        data["hints"] = [
+            {"phase": "Fill Form", "text": "Use dropdown"},
+            {"phase": "", "text": "Split into two phases"},
+        ]
+        goal_path.write_text(json.dumps(data))
+        dispatch("show", ["login"], config, _identity)
+        output = capsys.readouterr().out
+        assert "Hints (2)" in output
+        assert "[Fill Form]" in output
+        assert "Use dropdown" in output
+        assert "[Goal]" in output
+        assert "Split into two phases" in output
+
     def test_delete_missing_arg(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
     ) -> None:
@@ -657,7 +677,10 @@ class TestHintCommands:
     ) -> None:
         config = _make_config(tmp_path)
         assert config.goal_summaries_dir is not None
-        _write_goal(config.goal_summaries_dir, "login")
+        _write_goal(
+            config.goal_summaries_dir, "login",
+            subtasks=[{"filename": "fill-form.txt"}],
+        )
         dispatch("hint", ["login", "Fill", "Form", "--", "Click", "More", "Options"], config, _identity)
         output = capsys.readouterr().out
         assert "Hint saved" in output
@@ -794,13 +817,140 @@ class TestHintCommands:
         """Existing ``hint login Fill Form -- text`` behavior is unchanged."""
         config = _make_config(tmp_path)
         assert config.goal_summaries_dir is not None
-        _write_goal(config.goal_summaries_dir, "login")
+        _write_goal(
+            config.goal_summaries_dir, "login",
+            subtasks=[{"filename": "fill-form.txt"}],
+        )
         dispatch("hint", ["login", "Fill", "Form", "--", "Use", "tab", "key"], config, _identity)
         output = capsys.readouterr().out
         assert 'Hint saved for phase "Fill Form"' in output
         data = json.loads((config.goal_summaries_dir / "login-task.json").read_text())
         assert data["hints"][0]["phase"] == "Fill Form"
         assert data["hints"][0]["text"] == "Use tab key"
+
+
+    def test_hint_rejects_unknown_phase(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """hint with a non-existent phase should print an error."""
+        config = _make_config(tmp_path)
+        assert config.goal_summaries_dir is not None
+        _write_goal(
+            config.goal_summaries_dir, "login",
+            subtasks=[{"filename": "fill-form.txt"}],
+        )
+        dispatch("hint", ["login", "Nonexistent", "Phase", "--", "text"], config, _identity)
+        output = capsys.readouterr().out
+        assert "Unknown phase" in output
+        assert "Fill Form" in output  # shows available phases
+
+    def test_hint_rejects_phase_when_no_subtasks(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """hint with a phase on a goal that has no subtasks should print an error."""
+        config = _make_config(tmp_path)
+        assert config.goal_summaries_dir is not None
+        _write_goal(config.goal_summaries_dir, "login")
+        dispatch("hint", ["login", "Some", "Phase", "--", "text"], config, _identity)
+        output = capsys.readouterr().out
+        assert "Unknown phase" in output
+        assert "no subtask phases" in output
+
+    def test_hint_phase_case_insensitive(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """Phase name matching should be case-insensitive and use canonical case."""
+        config = _make_config(tmp_path)
+        assert config.goal_summaries_dir is not None
+        _write_goal(
+            config.goal_summaries_dir, "login",
+            subtasks=[{"filename": "fill-form.txt"}],
+        )
+        dispatch("hint", ["login", "fill", "form", "--", "try", "dropdown"], config, _identity)
+        output = capsys.readouterr().out
+        assert "Hint saved" in output
+        data = json.loads((config.goal_summaries_dir / "login-task.json").read_text())
+        assert data["hints"][0]["phase"] == "Fill Form"  # canonical case
+
+    def test_completes_phase_names_for_hint(self, tmp_path: Path) -> None:
+        """After goal name, tab completion should suggest phase names."""
+        from prompt_toolkit.document import Document
+
+        config = _make_config(tmp_path)
+        assert config.goal_summaries_dir is not None
+        _write_goal(
+            config.goal_summaries_dir, "login",
+            subtasks=[
+                {"filename": "fill-form.txt"},
+                {"filename": "verify-result.txt"},
+            ],
+        )
+        completer = SparkCompleter(config)
+        doc = Document("hint login ", len("hint login "))
+        results = [c.text for c in completer.get_completions(doc, None)]
+        assert "Fill Form" in results
+        assert "Verify Result" in results
+        assert "--" in results
+
+    def test_completes_phase_prefix(self, tmp_path: Path) -> None:
+        """Typing a partial phase name should filter completions."""
+        from prompt_toolkit.document import Document
+
+        config = _make_config(tmp_path)
+        assert config.goal_summaries_dir is not None
+        _write_goal(
+            config.goal_summaries_dir, "login",
+            subtasks=[
+                {"filename": "fill-form.txt"},
+                {"filename": "verify-result.txt"},
+            ],
+        )
+        completer = SparkCompleter(config)
+        doc = Document("hint login F", len("hint login F"))
+        results = [c.text for c in completer.get_completions(doc, None)]
+        assert "Fill Form" in results
+        assert "Verify Result" not in results
+
+    def test_completes_separator_after_full_phase(self, tmp_path: Path) -> None:
+        """After typing a complete phase name, suggest '--'."""
+        from prompt_toolkit.document import Document
+
+        config = _make_config(tmp_path)
+        assert config.goal_summaries_dir is not None
+        _write_goal(
+            config.goal_summaries_dir, "login",
+            subtasks=[{"filename": "fill-form.txt"}],
+        )
+        completer = SparkCompleter(config)
+        doc = Document("hint login Fill Form ", len("hint login Fill Form "))
+        results = [c.text for c in completer.get_completions(doc, None)]
+        assert results == ["--"]
+
+    def test_no_completion_after_separator(self, tmp_path: Path) -> None:
+        """After '--', no completions should be offered."""
+        from prompt_toolkit.document import Document
+
+        config = _make_config(tmp_path)
+        assert config.goal_summaries_dir is not None
+        _write_goal(config.goal_summaries_dir, "login")
+        completer = SparkCompleter(config)
+        doc = Document("hint login -- ", len("hint login -- "))
+        results = [c.text for c in completer.get_completions(doc, None)]
+        assert results == []
+
+    def test_hint_goal_name_completion(self, tmp_path: Path) -> None:
+        """First arg position should still complete goal names."""
+        from prompt_toolkit.document import Document
+
+        config = _make_config(tmp_path)
+        assert config.goal_summaries_dir is not None
+        _write_goal(config.goal_summaries_dir, "login")
+        _write_goal(config.goal_summaries_dir, "logout")
+        completer = SparkCompleter(config)
+        doc = Document("hint log", len("hint log"))
+        results = [c.text for c in completer.get_completions(doc, None)]
+        assert "login" in results
+        assert "logout" in results
 
 
 class TestRunHintsFlag:

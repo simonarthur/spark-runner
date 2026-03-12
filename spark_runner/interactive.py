@@ -69,7 +69,7 @@ COMMANDS: dict[str, str] = {
 }
 
 # Commands that accept goal names as arguments
-_GOAL_ARG_COMMANDS = {"show", "run", "delete", "hint", "hints", "unhint"}
+_GOAL_ARG_COMMANDS = {"show", "run", "delete", "hints", "unhint"}
 # Commands that accept run paths as arguments
 _RUN_ARG_COMMANDS = {"results"}
 
@@ -139,6 +139,65 @@ class SparkCompleter(Completer):
             for flag in flags:
                 if flag.startswith(current):
                     yield Completion(flag, start_position=-len(current))
+            return
+
+        # Special: 'hint' has goal completion then phase completion
+        if cmd == "hint":
+            if "--" in parts:
+                # After separator — no completion
+                return
+
+            at_goal_pos = (
+                (len(parts) == 1 and text.endswith(" "))
+                or (len(parts) == 2 and not text.endswith(" "))
+            )
+            if at_goal_pos:
+                for name in _list_goal_names(self._config):
+                    if name.startswith(current):
+                        yield Completion(name, start_position=-len(current))
+                return
+
+            # Phase name position (after goal, before --)
+            goal_name = parts[1]
+            from spark_runner.goals import get_phase_names
+
+            gs_dir = self._config.goal_summaries_dir
+            phases: list[str] = []
+            if gs_dir is not None:
+                goal_path = gs_dir / f"{goal_name}-task.json"
+                phases = get_phase_names(goal_path)
+
+            # Build typed prefix for the phase
+            if text.endswith(" "):
+                phase_parts = parts[2:]
+            else:
+                phase_parts = parts[2:-1]
+            phase_typed = " ".join(phase_parts)
+            partial = current if len(parts) > 2 and not text.endswith(" ") else ""
+            full_prefix = (
+                (phase_typed + " " + partial).strip() if partial else phase_typed
+            )
+
+            # Calculate start_position to replace entire typed phase text
+            raw_len = len(full_prefix)
+            if text.endswith(" ") and full_prefix:
+                raw_len += 1  # account for trailing space
+            start_pos = -raw_len
+
+            exact = any(p.lower() == full_prefix.lower() for p in phases)
+
+            if exact:
+                # Phase fully typed — suggest separator
+                yield Completion("--", start_position=0)
+            else:
+                for phase in phases:
+                    if not full_prefix or phase.lower().startswith(
+                        full_prefix.lower()
+                    ):
+                        yield Completion(phase, start_position=start_pos)
+                # Suggest -- for goal-level hint
+                if not full_prefix:
+                    yield Completion("--", start_position=0)
             return
 
         # Complete goal names
@@ -446,7 +505,22 @@ def _handle_hint(args: list[str], config: SparkConfig) -> None:
         print(f"Goal not found: {goal_name}")
         return
 
-    from spark_runner.goals import save_hint
+    from spark_runner.goals import get_phase_names, save_hint
+
+    # Validate phase name if provided
+    if phase_name:
+        valid_phases: list[str] = get_phase_names(goal_path)
+        matched: list[str] = [
+            p for p in valid_phases if p.lower() == phase_name.lower()
+        ]
+        if not matched:
+            print(f"Unknown phase: \"{phase_name}\"")
+            if valid_phases:
+                print(f"Available phases: {', '.join(valid_phases)}")
+            else:
+                print("This goal has no subtask phases defined.")
+            return
+        phase_name = matched[0]  # use canonical case
 
     save_hint(goal_path, phase_name, text)
     if phase_name:

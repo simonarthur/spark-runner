@@ -39,6 +39,30 @@ def save_hint(goal_path: Path, phase: str, text: str) -> None:
     goal_path.write_text(json.dumps(data, indent=2))
 
 
+def get_phase_names(goal_path: Path) -> list[str]:
+    """Return phase names for a goal, derived from subtask filenames.
+
+    Phase names are computed the same way as :func:`load_goal_summary`:
+    ``stem.replace("-", " ").title()``.
+
+    Args:
+        goal_path: Path to the goal summary JSON file.
+
+    Returns:
+        A list of phase name strings (e.g. ``["Fill Form", "Verify Result"]``).
+    """
+    try:
+        data: dict[str, Any] = json.loads(goal_path.read_text())
+    except (json.JSONDecodeError, OSError):
+        return []
+    names: list[str] = []
+    for entry in data.get("subtasks", []):
+        if isinstance(entry, dict) and "filename" in entry:
+            stem = Path(entry["filename"]).stem
+            names.append(stem.replace("-", " ").title())
+    return names
+
+
 def remove_hint(goal_path: Path, index: int) -> bool:
     """Remove a hint by index.
 
@@ -350,6 +374,13 @@ def show_goal_detail(
             text = _observation_text(obs)
             severity = obs.get("severity", "unclassified") if isinstance(obs, dict) else "unclassified"
             print(f"    [{severity}] {text}")
+
+    hints: list[dict[str, str]] = data.get("hints", [])
+    if hints:
+        print(f"\n  Hints ({len(hints)}):")
+        for i, h in enumerate(hints):
+            label: str = h["phase"] if h["phase"] else "Goal"
+            print(f"    {i}. [{label}] {h['text']}")
 
 
 def delete_goal(

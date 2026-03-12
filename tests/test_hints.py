@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from spark_runner.goals import load_hints, remove_hint, save_hint
+from spark_runner.goals import get_phase_names, load_hints, remove_hint, save_hint
 
 
 def _write_goal(path: Path, hints: list[dict[str, str]] | None = None) -> Path:
@@ -91,3 +91,35 @@ class TestRemoveHint:
     def test_remove_hint_empty_list(self, tmp_path: Path) -> None:
         goal_path = _write_goal(tmp_path / "test-task.json")
         assert remove_hint(goal_path, 0) is False
+
+
+class TestGetPhaseNames:
+    def test_returns_phase_names_from_subtasks(self, tmp_path: Path) -> None:
+        goal_path = tmp_path / "test-task.json"
+        data: dict[str, Any] = {
+            "main_task": "Test goal",
+            "subtasks": [
+                {"filename": "fill-form.txt"},
+                {"filename": "verify-result.txt"},
+            ],
+            "key_observations": [],
+        }
+        goal_path.write_text(json.dumps(data))
+        assert get_phase_names(goal_path) == ["Fill Form", "Verify Result"]
+
+    def test_empty_subtasks(self, tmp_path: Path) -> None:
+        goal_path = _write_goal(tmp_path / "test-task.json")
+        assert get_phase_names(goal_path) == []
+
+    def test_missing_file(self, tmp_path: Path) -> None:
+        assert get_phase_names(tmp_path / "missing.json") == []
+
+    def test_single_word_filename(self, tmp_path: Path) -> None:
+        goal_path = tmp_path / "test-task.json"
+        data: dict[str, Any] = {
+            "main_task": "Test",
+            "subtasks": [{"filename": "login.txt"}],
+            "key_observations": [],
+        }
+        goal_path.write_text(json.dumps(data))
+        assert get_phase_names(goal_path) == ["Login"]
